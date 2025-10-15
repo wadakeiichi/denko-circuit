@@ -1,0 +1,1742 @@
+ <!DOCTYPE html>
+  <html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <title>複線図シミュレータ</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f4f6f8;
+        color: #1f2933;
+      }
+      .app { display: flex; min-height: 100vh; }
+      .sidebar {
+        width: 320px;
+        padding: 24px;
+        background: #ffffff;
+        border-right: 1px solid #d0d7de;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+      .sidebar h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      .panel h2 {
+        margin: 0 0 8px 0;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .panel p, .panel li {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .panel ul { padding-left: 20px; }
+      .panel li { margin-bottom: 6px; }
+      .color-selector {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .color-button, .tool-button {
+        border: 1px solid #d0d7de;
+        background: #f8fafc;
+        padding: 10px 12px;
+        border-radius: 6px;
+        font-size: 14px;
+        text-align: left;
+        cursor: pointer;
+        transition: all .15s ease;
+      }
+      .color-button:hover, .tool-button:hover { border-color: #94a3b8; background: #f1f5f9; }
+      .color-button.active, .tool-button.active {
+        border-color: #2563eb;
+        background: #dbeafe;
+        color: #1d4ed8;
+        box-shadow: 0 0 0 1px #2563eb inset;
+      }
+      .color-button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .color-button::before {
+        content: '';
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1px solid #1e293b;
+      }
+      .color-button[data-color="black"]::before { background: #111827; border-color: #0f172a; }
+      .color-button[data-color="blue"]::before { background: #1d4ed8; border-color: #1e3a8a; }
+      .color-button[data-color="red"]::before { background: #dc2626; border-color: #991b1b; }
+      .tool-buttons { display: flex; gap: 8px; }
+      .component-palette {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 8px;
+      }
+      .component-button {
+        border: 1px solid #d0d7de;
+        background: #ffffff;
+        padding: 10px;
+        border-radius: 6px;
+        font-size: 13px;
+        text-align: center;
+        cursor: pointer;
+        transition: all .15s ease;
+      }
+      .component-button:hover { border-color: #94a3b8; background: #f8fafc; }
+      .component-button.active {
+        border-color: #f97316;
+        background: #fff7ed;
+        color: #c2410c;
+        box-shadow: 0 0 0 1px #f97316 inset;
+      }
+      .main { flex: 1; display: flex; flex-direction: column; }
+      .canvas-header {
+        padding: 18px 24px;
+        background: #ffffff;
+        border-bottom: 1px solid #d0d7de;
+        font-size: 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .canvas-stage { flex: 1; position: relative; min-height: 640px; }
+      canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+      .status { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #475569; flex-wrap: wrap; }
+      .status span { display: flex; align-items: center; gap: 4px; }
+      .check-button {
+        border: 1px solid #d0d7de;
+        background: #ffffff;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all .15s ease;
+      }
+      .check-button:hover { border-color: #94a3b8; background: #f8fafc; }
+      .switch-toggle {
+        border: 1px solid #d0d7de;
+        background: #f8fafc;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all .15s ease;
+      }
+      .switch-toggle:hover { border-color: #94a3b8; background: #f1f5f9; }
+      .switch-toggle.on {
+        border-color: #22c55e;
+        background: #dcfce7;
+        color: #166534;
+        box-shadow: 0 0 0 1px #22c55e inset;
+      }
+      .switch-toggle:disabled {
+        opacity: .5;
+        cursor: not-allowed;
+      }
+      .lamp-indicator.on { color: #d97706; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="panel">
+          <h1>複線図シミュレータ</h1>
+          <p>電源 (1Φ2W 100V)、単極スイッチ、コンセント（接地側Wマーク）、ランプを結線し、複線図を作図できます。
+  </p>
+        </div>
+        <div class="panel">
+          <h2>芯線色選択</h2>
+          <div id="color-selector" class="color-selector"></div>
+        </div>
+        <div class="panel">
+          <h2>器具パレット</h2>
+          <div id="component-palette" class="component-palette"></div>
+        </div>
+        <div class="panel">
+          <h2>操作方法</h2>
+          <ul>
+            <li>配線モード: コネクタをダブルクリックして配線開始、終点をクリックで接続。背景クリックで折り点を追加</li>
+            <li>器具パレットから選択し、キャンバスをクリックすると配置できます</li>
+            <li>ヘッダーの「配線チェック」ボタンで芯線色の整合性を確認できます</li>
+            <li>配線前に芯線色を選択すると、その接続区間の色になります</li>
+            <li>スイッチ操作: ヘッダーのボタンで入/切を切り替えて動作を確認</li>
+            <li>消しゴムモード: 配線や器具をクリックして削除</li>
+            <li>既存ケーブルをダブルクリックで分岐用接続点（J）を挿入</li>
+            <li>接続点挿入時は、接続点から先の区間が現在選択中の色で再作成されます</li>
+            <li>接続点はドラッグして位置を調整できます</li>
+            <li>機器の外枠をドラッグして配置を移動</li>
+            <li>Escキーで作図中の配線や器具選択をキャンセル</li>
+          </ul>
+        </div>
+      </aside>
+      <main class="main">
+        <div class="canvas-header">
+          <div class="tool-buttons" id="tool-buttons"></div>
+          <div class="status">
+            <span>選択中の芯線色: <strong id="selected-color-label"></strong></span>
+            <span>スイッチ:
+              <button id="switch-toggle" type="button" class="switch-toggle">切 (OFF)</button>
+            </span>
+            <span>ランプ: <strong id="lamp-status" class="lamp-indicator">消灯</strong></span>
+            <button id="check-wiring" type="button" class="check-button">配線チェック</button>
+            <span id="status-tip"></span>
+          </div>
+        </div>
+        <div class="canvas-stage">
+          <canvas id="wiring-canvas"></canvas>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      (() => {
+        const conductorOptions = [
+          { id: 'black', label: '黒', color: 'black' },
+          { id: 'blue', label: '青', color: 'blue' },
+          { id: 'red', label: '赤', color: 'red' }
+        ];
+
+        const pairingKana = ['イ', 'ロ', 'ハ', 'ニ', 'ホ', 'ヘ', 'ト', 'チ', 'リ', 'ヌ', 'ル', 'ヲ', 'ワ', 'カ', 'ヨ', 'タ', 'レ', 'ソ', 'ツ', 'ネ', 'ナ', 'ラ', 'ム', 'ウ', 'ヰ', 'ノ', 'オ', 'ク', 'ヤ', 'マ', 'ケ', 'フ', 'コ', 'エ', 'テ', 'ア', 'サ', 'キ', 'ユ', 'メ', 'ミ', 'シ', 'ヱ', 'ヒ', 'モ', 'セ', 'ス'];
+
+        const toolModes = [
+          { id: 'draw', label: '配線' },
+          { id: 'erase', label: '消しゴム' }
+        ];
+
+        const componentTemplates = {
+          power: {
+            type: 'power',
+            displayName: '電源',
+            label: '電源\n1Φ2W 100V',
+            size: { width: 164, height: 120 },
+            defaultPosition: { x: 80, y: 200 },
+            connectors: [
+              { key: 'hot', label: 'L', color: 'black', role: 'hot', offset: { x: 164, y: 40 } },
+              { key: 'neutral', label: 'N', color: 'blue', role: 'neutral', offset: { x: 164, y: 80 } }
+            ]
+          },
+          switch: {
+            type: 'switch',
+            displayName: '単極スイッチ',
+            label: '単極スイッチ',
+            size: { width: 110, height: 100 },
+            defaultPosition: { x: 340, y: 210 },
+            connectors: [
+              { key: 'in', label: 'IN', color: 'black', role: 'hot', offset: { x: 0, y: 50 } },
+              { key: 'out', label: 'OUT', color: 'black', role: 'switched', offset: { x: 110, y: 50 } }
+            ]
+          },
+          outlet: {
+            type: 'outlet',
+            displayName: 'コンセント',
+            label: 'コンセント',
+            size: { width: 140, height: 160 },
+            defaultPosition: { x: 570, y: 190 },
+            connectors: [
+              { key: 'neutral', label: 'W', color: 'blue', role: 'neutral', offset: { x: 0, y: 80 } },
+              { key: 'hot', label: 'L', color: 'black', role: 'hot', offset: { x: 140, y: 80 } }
+            ]
+          },
+          lamp: {
+            type: 'lamp',
+            displayName: 'ランプレセプタクル',
+            label: 'ランプレセプタクル',
+            size: { width: 170, height: 170 },
+            defaultPosition: { x: 860, y: 160 },
+            connectors: [
+              { key: 'neutral', label: 'N', color: 'blue', role: 'neutral', offset: { x: 0, y: 85 } },
+              { key: 'hot', label: 'L', color: 'black', role: 'switched', offset: { x: 170, y: 85 } }
+            ]
+          },
+          pilot: {
+            type: 'pilot',
+            displayName: 'パイロットランプ',
+            label: 'パイロットランプ',
+            size: { width: 120, height: 120 },
+            defaultPosition: { x: 1040, y: 320 },
+            connectors: [
+              { key: 'neutral', label: 'N', color: 'blue', role: 'neutral', offset: { x: 0, y: 60 } },
+              { key: 'hot', label: 'L', color: 'black', role: 'switched', offset: { x: 120, y: 60 } }
+            ]
+          }
+        };
+
+        const initialComponentLayout = [
+          { type: 'power' },
+          { type: 'switch' },
+          { type: 'outlet' },
+          { type: 'lamp' }
+        ];
+
+        const state = {
+          selectedColor: conductorOptions[0].color,
+          toolMode: 'draw',
+          components: [],
+          wires: [],
+          junctions: [],
+          activeWire: null,
+          hoverConnectorId: null,
+          hoverWireId: null,
+          pointer: null,
+          draggingComponent: null,
+          draggingJunction: null,
+          statusResetTimer: null,
+          switchClosed: false,
+          lampOn: false,
+          pilotOn: false,
+          pendingComponentType: null,
+          primaryIds: { power: null, switch: null, lamp: null },
+          pairingLabels: new Map(),
+          counters: {
+            wire: 0,
+            junction: 0,
+            component: { power: 0, switch: 0, outlet: 0, lamp: 0, pilot: 0 }
+          }
+        };
+
+        let componentConnectorIndex = new Map();
+        state.junctionIndex = new Map();
+
+        const canvas = document.getElementById('wiring-canvas');
+        const ctx = canvas.getContext('2d');
+        const selectorContainer = document.getElementById('color-selector');
+        const componentPaletteContainer = document.getElementById('component-palette');
+        const selectedColorLabel = document.getElementById('selected-color-label');
+        const switchToggle = document.getElementById('switch-toggle');
+        const lampStatusLabel = document.getElementById('lamp-status');
+        const checkWiringButton = document.getElementById('check-wiring');
+        const statusTip = document.getElementById('status-tip');
+        const toolButtonsContainer = document.getElementById('tool-buttons');
+
+        function init() {
+          buildColorControls();
+          buildComponentPalette();
+          buildToolButtons();
+          seedInitialComponents();
+          rebuildConnectorIndex();
+          bindEvents();
+          if (switchToggle) {
+            switchToggle.addEventListener('click', toggleSwitch);
+          }
+          if (checkWiringButton) {
+            checkWiringButton.addEventListener('click', () => {
+              const { errors, warnings } = validateConductorAssignments();
+              if (errors.length) {
+                updateStatusTip(errors[0]);
+              } else if (warnings.length) {
+                updateStatusTip(warnings[0]);
+              } else {
+                updateStatusTip('配線に問題は見つかりませんでした');
+              }
+            });
+          }
+          updateSwitchUI();
+          updateLampStatusUI();
+          window.requestAnimationFrame(resizeCanvas);
+          updateStatusTip();
+        }
+
+        function buildColorControls() {
+          selectorContainer.innerHTML = '';
+          conductorOptions.forEach(option => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'color-button';
+            button.dataset.color = option.color;
+            button.textContent = option.label;
+            button.addEventListener('click', () => {
+              state.selectedColor = option.color;
+              updateColorUI();
+          });
+          selectorContainer.appendChild(button);
+        });
+        updateColorUI();
+      }
+
+        function buildComponentPalette() {
+          if (!componentPaletteContainer) return;
+          componentPaletteContainer.innerHTML = '';
+          Object.values(componentTemplates).forEach(template => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'component-button';
+            button.dataset.componentType = template.type;
+            button.textContent = template.displayName;
+            button.addEventListener('click', () => setPendingComponentType(template.type));
+            componentPaletteContainer.appendChild(button);
+          });
+          updateComponentPaletteUI();
+        }
+
+        function setPendingComponentType(type) {
+          if (state.pendingComponentType === type) {
+            state.pendingComponentType = null;
+            updateStatusTip('器具の選択を取消しました');
+          } else {
+            state.pendingComponentType = type;
+            if (state.toolMode === 'erase') {
+              setToolMode('draw');
+            }
+            const template = componentTemplates[type];
+            if (template) {
+              updateStatusTip(template.displayName + 'を配置する位置をクリック');
+            }
+          }
+          updateComponentPaletteUI();
+        }
+
+        function updateComponentPaletteUI() {
+          if (!componentPaletteContainer) return;
+          componentPaletteContainer.querySelectorAll('.component-button').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.componentType === state.pendingComponentType);
+          });
+        }
+
+        function seedInitialComponents() {
+          if (state.components.length) return;
+          initialComponentLayout.forEach(entry => {
+            addComponentInstance(entry.type, entry.position || null);
+          });
+        }
+
+        function addComponentInstance(type, position = null) {
+          const component = createComponentInstance(type, position);
+          if (!component) return null;
+          state.components.push(component);
+          if (Object.prototype.hasOwnProperty.call(state.primaryIds, component.type) &&
+            !state.primaryIds[component.type]) {
+            state.primaryIds[component.type] = component.id;
+          }
+          rebuildConnectorIndex();
+          updateSwitchUI();
+          return component;
+        }
+
+        function placePendingComponent(point) {
+          const type = state.pendingComponentType;
+          const template = type ? componentTemplates[type] : null;
+          if (!template) return false;
+          const rect = canvas.getBoundingClientRect();
+          const stageWidth = rect.width || (template.size.width + 40);
+          const stageHeight = rect.height || (template.size.height + 40);
+          const margin = 12;
+          const maxX = stageWidth - template.size.width - margin;
+          const maxY = stageHeight - template.size.height - margin;
+          const position = {
+            x: Math.max(margin, Math.min(point.x - template.size.width / 2, maxX)),
+            y: Math.max(margin, Math.min(point.y - template.size.height / 2, maxY))
+          };
+          const component = addComponentInstance(type, position);
+          if (!component) return false;
+          state.pendingComponentType = null;
+          updateComponentPaletteUI();
+          updateStatusTip(template.displayName + 'を配置しました');
+          draw();
+          return true;
+        }
+
+        function createComponentInstance(type, position = null) {
+          const template = componentTemplates[type];
+          if (!template) return null;
+          if (!Object.prototype.hasOwnProperty.call(state.counters.component, type)) {
+            state.counters.component[type] = 0;
+          }
+          state.counters.component[type] += 1;
+          const id = type + '-' + state.counters.component[type];
+          const basePosition = position || template.defaultPosition || { x: 120, y: 120 };
+          const component = {
+            id,
+            type: template.type,
+            label: template.label,
+            position: { x: basePosition.x, y: basePosition.y },
+            size: { width: template.size.width, height: template.size.height },
+            connectors: template.connectors.map(connector => ({
+              key: connector.key,
+              label: connector.label,
+              color: connector.color,
+              role: connector.role,
+              offset: { x: connector.offset.x, y: connector.offset.y },
+              id: id + '-' + connector.key
+            }))
+          };
+          return component;
+        }
+
+        function rebuildConnectorIndex() {
+          componentConnectorIndex = new Map();
+          state.components.forEach(component => {
+            component.connectors.forEach(connector => {
+              componentConnectorIndex.set(connector.id, { component, connector });
+            });
+          });
+        }
+
+        function getComponentById(id) {
+          return state.components.find(component => component.id === id) || null;
+        }
+
+        function getConnectorByKey(componentId, key) {
+          const component = getComponentById(componentId);
+          if (!component) return null;
+          return component.connectors.find(connector => connector.key === key) || null;
+        }
+
+        function getConnectorId(componentId, key) {
+          const connector = getConnectorByKey(componentId, key);
+          return connector ? connector.id : null;
+        }
+
+        function buildToolButtons() {
+          toolButtonsContainer.innerHTML = '';
+          toolModes.forEach(mode => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'tool-button';
+            button.dataset.toolMode = mode.id;
+            button.textContent = mode.label;
+            button.addEventListener('click', () => setToolMode(mode.id));
+            toolButtonsContainer.appendChild(button);
+          });
+          updateToolButtons();
+        }
+
+        function setToolMode(mode) {
+          if (mode === state.toolMode) return;
+          state.toolMode = mode;
+          if (state.activeWire && state.toolMode !== 'draw') {
+            cancelActiveWire();
+          }
+          state.hoverWireId = null;
+          if (state.toolMode === 'erase' && state.pendingComponentType) {
+            state.pendingComponentType = null;
+            updateComponentPaletteUI();
+          }
+          updateToolButtons();
+          updateStatusTip();
+          draw();
+        }
+
+        function updateColorUI() {
+          const selectedOption =
+            conductorOptions.find(option => option.color === state.selectedColor) || conductorOptions[0];
+          state.selectedColor = selectedOption.color;
+          document.querySelectorAll('.color-button').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.color === state.selectedColor);
+          });
+          selectedColorLabel.textContent = selectedOption.label;
+        }
+
+        function updateToolButtons() {
+          document.querySelectorAll('.tool-button').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.toolMode === state.toolMode);
+          });
+          canvas.style.cursor = state.toolMode === 'erase' ? 'not-allowed' : 'crosshair';
+          if (
+            state.draggingComponent ||
+            (state.draggingJunction && state.draggingJunction.isDragging)
+          ) {
+            canvas.style.cursor = 'grabbing';
+          }
+        }
+
+        function toggleSwitch() {
+          const primarySwitch = state.primaryIds.switch ? getComponentById(state.primaryIds.switch) : null;
+          if (!primarySwitch) {
+            updateStatusTip('スイッチが配置されていません');
+            state.switchClosed = false;
+            updateSwitchUI();
+            return;
+          }
+          state.switchClosed = !state.switchClosed;
+          updateSwitchUI();
+          updateStatusTip(state.switchClosed ? 'スイッチを入れました' : 'スイッチを切りました');
+          draw();
+        }
+
+        function updateSwitchUI() {
+          if (!switchToggle) return;
+          const primarySwitch = state.primaryIds.switch ? getComponentById(state.primaryIds.switch) : null;
+          const hasSwitch = Boolean(primarySwitch);
+          switchToggle.disabled = !hasSwitch;
+          if (hasSwitch) {
+            const isOn = state.switchClosed;
+            switchToggle.textContent = isOn ? '入 (ON)' : '切 (OFF)';
+            switchToggle.classList.toggle('on', isOn);
+            switchToggle.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+          } else {
+            switchToggle.textContent = 'スイッチ未配置';
+            switchToggle.classList.remove('on');
+            switchToggle.setAttribute('aria-pressed', 'false');
+          }
+        }
+
+        function updateLampStatusUI() {
+          if (!lampStatusLabel) return;
+          lampStatusLabel.textContent = state.lampOn ? '点灯' : '消灯';
+          lampStatusLabel.classList.toggle('on', state.lampOn);
+        }
+
+        function bindEvents() {
+          canvas.addEventListener('mousedown', onPointerDown);
+          canvas.addEventListener('mousemove', onPointerMove);
+          canvas.addEventListener('mouseleave', onPointerLeave);
+          canvas.addEventListener('dblclick', onCanvasDoubleClick);
+          canvas.addEventListener('contextmenu', evt => evt.preventDefault());
+          window.addEventListener('resize', debounce(resizeCanvas, 150));
+          window.addEventListener('keydown', evt => {
+            if (evt.key === 'Escape') {
+              if (state.activeWire) {
+                cancelActiveWire();
+                draw();
+                return;
+              }
+              if (state.pendingComponentType) {
+                state.pendingComponentType = null;
+                updateComponentPaletteUI();
+                updateStatusTip('器具の選択を取消しました');
+              }
+            }
+          });
+          window.addEventListener('mouseup', onPointerUp);
+        }
+
+        function onPointerDown(evt) {
+          if (evt.button !== 0) return;
+          const point = getCanvasPoint(evt);
+          state.pointer = point;
+
+          if (state.pendingComponentType && state.toolMode !== 'erase') {
+            if (placePendingComponent(point)) {
+              return;
+            }
+          }
+
+          if (state.toolMode === 'erase') {
+            eraseAt(point);
+            return;
+          }
+
+          if (tryStartComponentDrag(point)) {
+            draw();
+            return;
+          }
+
+          if (!state.activeWire) {
+            if (tryStartJunctionDrag(point)) {
+              draw();
+              return;
+            }
+          }
+
+          const connectorTarget = findConnectorAt(point);
+
+          if (state.activeWire) {
+            if (connectorTarget && connectorTarget.id !== state.activeWire.startConnectorId) {
+              finalizeActiveWire(connectorTarget);
+            } else if (!connectorTarget) {
+              commitActiveWireCorner(point);
+            }
+          }
+          draw();
+        }
+
+        function onPointerMove(evt) {
+          const point = getCanvasPoint(evt);
+          state.pointer = point;
+
+          if (state.draggingComponent) {
+            updateComponentDrag(point);
+            draw();
+            return;
+          }
+          if (state.draggingJunction) {
+            updateJunctionDrag(point);
+            draw();
+            return;
+          }
+
+          const connectorTarget = findConnectorAt(point);
+          state.hoverConnectorId = connectorTarget ? connectorTarget.id : null;
+
+          if (state.toolMode === 'erase') {
+            const hit = findWireSegment(point);
+            state.hoverWireId = hit && hit.distance <= 12 ? hit.wire.id : null;
+          } else {
+            state.hoverWireId = null;
+            if (state.activeWire) {
+              const snapPoint = connectorTarget ? connectorTarget.position : point;
+              updateActiveWirePreview(snapPoint);
+            }
+          }
+          draw();
+        }
+
+        function onPointerLeave() {
+          if (state.draggingComponent || state.draggingJunction) return;
+          state.hoverConnectorId = null;
+          state.hoverWireId = null;
+          if (state.activeWire) {
+            const pts = state.activeWire.points;
+            updateActiveWirePreview(pts[pts.length - 1]);
+          }
+          draw();
+        }
+
+        function onPointerUp() {
+          if (state.draggingComponent) {
+            endComponentDrag();
+            draw();
+            return;
+          }
+          if (state.draggingJunction) {
+            endJunctionDrag();
+            draw();
+          }
+        }
+
+        function onCanvasDoubleClick(evt) {
+          evt.preventDefault();
+          if (state.draggingComponent) return;
+          if (state.draggingJunction) {
+            endJunctionDrag();
+          }
+          const point = getCanvasPoint(evt);
+          const connectorTarget = findConnectorAt(point);
+
+          if (state.activeWire) {
+            if (connectorTarget) {
+              if (connectorTarget.id !== state.activeWire.startConnectorId) {
+                finalizeActiveWire(connectorTarget);
+              }
+            } else {
+              const junction = createJunction(point);
+              finalizeActiveWire({ id: junction.id, position: { x: junction.x, y: junction.y } });
+            }
+            draw();
+            return;
+          }
+
+          if (connectorTarget) {
+            startWire(connectorTarget);
+            draw();
+            return;
+          }
+
+          const hit = findWireSegment(point);
+          if (hit && hit.distance <= 14) {
+            const existing = state.junctions.find(j => distance(point, j) < 12);
+            const projection = hit.projection;
+            const junction = existing ? existing : insertJunction(hit.wire, hit.segmentIndex, projection);
+            state.hoverConnectorId = junction.id;
+            draw();
+            return;
+          }
+
+          const newJunction = createJunction(point);
+          state.hoverConnectorId = newJunction.id;
+          draw();
+        }
+
+        function tryStartComponentDrag(point) {
+          const target = findComponentAt(point);
+          if (!target) return false;
+          const offset = { x: point.x - target.position.x, y: point.y - target.position.y };
+          state.draggingComponent = { component: target, offset };
+          canvas.style.cursor = 'grabbing';
+          updateStatusTip('ドラッグで機器を移動');
+          return true;
+        }
+
+        function updateComponentDrag(point) {
+          const { component, offset } = state.draggingComponent;
+          component.position.x = point.x - offset.x;
+          component.position.y = point.y - offset.y;
+        }
+
+        function endComponentDrag() {
+          state.draggingComponent = null;
+          canvas.style.cursor = state.toolMode === 'erase' ? 'not-allowed' : 'crosshair';
+          updateStatusTip();
+        }
+
+        function tryStartJunctionDrag(point) {
+          if (state.draggingJunction) return true;
+          const junction = findJunctionNear(point, 10);
+          if (!junction) return false;
+          state.draggingJunction = {
+            junction,
+            offset: { x: point.x - junction.x, y: point.y - junction.y },
+            startPoint: { x: point.x, y: point.y },
+            isDragging: false
+          };
+          state.hoverConnectorId = junction.id;
+          return true;
+        }
+
+        function updateJunctionDrag(point) {
+          if (!state.draggingJunction) return;
+          const data = state.draggingJunction;
+          const distanceMoved = Math.hypot(point.x - data.startPoint.x, point.y - data.startPoint.y);
+          if (!data.isDragging && distanceMoved >= 3) {
+            data.isDragging = true;
+            canvas.style.cursor = 'grabbing';
+            updateStatusTip('ドラッグで接続点を移動');
+          }
+          if (!data.isDragging) return;
+          const { junction, offset } = data;
+          junction.x = point.x - offset.x;
+          junction.y = point.y - offset.y;
+          state.junctionIndex.set(junction.id, junction);
+          state.hoverConnectorId = junction.id;
+        }
+
+        function endJunctionDrag() {
+          if (!state.draggingJunction) return;
+          const wasDragging = state.draggingJunction.isDragging;
+          state.draggingJunction = null;
+          if (wasDragging) {
+            canvas.style.cursor = state.toolMode === 'erase' ? 'not-allowed' : 'crosshair';
+            updateStatusTip();
+          }
+        }
+
+        function startWire(connectorTarget) {
+          const startPoint = { x: connectorTarget.position.x, y: connectorTarget.position.y };
+          state.counters.wire += 1;
+          state.activeWire = {
+            id: 'wire-' + state.counters.wire,
+            color: state.selectedColor,
+            points: [startPoint, { x: startPoint.x, y: startPoint.y }],
+            startConnectorId: connectorTarget.id,
+            endConnectorId: null
+          };
+          updateStatusTip('配線中: 終了コネクタをクリック (Escで取消)');
+        }
+
+        function updateActiveWirePreview(point) {
+          if (!state.activeWire) return;
+          const pts = state.activeWire.points;
+          pts[pts.length - 1] = { x: point.x, y: point.y };
+        }
+
+        function commitActiveWireCorner(point) {
+          if (!state.activeWire) return;
+          const pts = state.activeWire.points;
+          pts[pts.length - 1] = { x: point.x, y: point.y };
+          pts.push({ x: point.x, y: point.y });
+        }
+
+        function finalizeActiveWire(connectorTarget) {
+          const wire = state.activeWire;
+          if (!wire) return;
+          if (connectorTarget.id === wire.startConnectorId) {
+            cancelActiveWire();
+            return;
+          }
+          const endPoint = { x: connectorTarget.position.x, y: connectorTarget.position.y };
+          wire.points[wire.points.length - 1] = endPoint;
+          simplifyWirePoints(wire);
+          if (wire.points.length < 2) {
+            cancelActiveWire();
+            return;
+          }
+          wire.endConnectorId = connectorTarget.id;
+          state.wires.push(wire);
+          state.activeWire = null;
+          const { errors, warnings } = validateConductorAssignments();
+          if (errors.length) {
+            updateStatusTip(errors[0]);
+          } else if (warnings.length) {
+            updateStatusTip(warnings[0]);
+          } else {
+            updateStatusTip();
+          }
+        }
+
+        function cancelActiveWire() {
+          state.activeWire = null;
+          updateStatusTip();
+        }
+
+        function eraseAt(point) {
+          const component = state.toolMode === 'erase' ? findComponentAt(point) : null;
+          if (component) {
+            removeComponent(component);
+            const template = componentTemplates[component.type];
+            const label = template ? template.displayName : component.label;
+            updateStatusTip(label + 'を削除しました');
+            draw();
+            return;
+          }
+
+          const junction = findJunctionNear(point, 12);
+          if (junction) {
+            removeJunction(junction);
+            state.hoverConnectorId = null;
+            updateStatusTip('接続点を削除しました');
+            draw();
+            return;
+          }
+          const hit = findWireSegment(point);
+          if (hit && hit.distance <= 12) {
+            state.wires = state.wires.filter(w => w.id !== hit.wire.id);
+            state.hoverWireId = null;
+            updateStatusTip('配線を削除しました');
+            draw();
+          } else {
+            updateStatusTip('削除したいオブジェクトをクリックしてください');
+          }
+        }
+
+        function removeComponent(component) {
+          const connectorIds = new Set(component.connectors.map(connector => connector.id));
+          state.components = state.components.filter(item => item.id !== component.id);
+
+          state.wires = state.wires.filter(wire => {
+            const remove = connectorIds.has(wire.startConnectorId) || connectorIds.has(wire.endConnectorId);
+            return !remove;
+          });
+
+          if (state.hoverWireId && !state.wires.some(wire => wire.id === state.hoverWireId)) {
+            state.hoverWireId = null;
+          }
+
+          if (state.hoverConnectorId && connectorIds.has(state.hoverConnectorId)) {
+            state.hoverConnectorId = null;
+          }
+
+          cleanupJunctions();
+
+          if (Object.prototype.hasOwnProperty.call(state.primaryIds, component.type) &&
+            state.primaryIds[component.type] === component.id) {
+            const replacement = state.components.find(item => item.type === component.type) || null;
+            state.primaryIds[component.type] = replacement ? replacement.id : null;
+            if (component.type === 'switch') {
+              state.switchClosed = false;
+              updateSwitchUI();
+            }
+          }
+
+          if (component.type === 'power' && !state.primaryIds.power) {
+            state.switchClosed = false;
+            updateSwitchUI();
+          }
+          if (component.type === 'lamp' && !state.primaryIds.lamp) {
+            state.lampOn = false;
+          }
+          if (component.type === 'pilot' && !state.components.some(item => item.type === 'pilot')) {
+            state.pilotOn = false;
+          }
+
+          rebuildConnectorIndex();
+        }
+
+        function cleanupJunctions() {
+          const usedJunctionIds = new Set();
+          state.wires.forEach(wire => {
+            if (state.junctionIndex.has(wire.startConnectorId)) {
+              usedJunctionIds.add(wire.startConnectorId);
+            }
+            if (state.junctionIndex.has(wire.endConnectorId)) {
+              usedJunctionIds.add(wire.endConnectorId);
+            }
+          });
+          state.junctions = state.junctions.filter(junction => usedJunctionIds.has(junction.id));
+          state.junctionIndex = new Map();
+          state.junctions.forEach(junction => {
+            state.junctionIndex.set(junction.id, junction);
+          });
+        }
+
+        function updateStatusTip(message) {
+          if (state.statusResetTimer) {
+            window.clearTimeout(state.statusResetTimer);
+            state.statusResetTimer = null;
+          }
+          if (message) {
+            statusTip.textContent = message;
+            state.statusResetTimer = window.setTimeout(() => {
+              state.statusResetTimer = null;
+              updateStatusTip();
+            }, 1600);
+            return;
+          }
+          if (state.toolMode === 'erase') {
+            statusTip.textContent = '消したい器具や配線をクリックしてください';
+          } else if (state.activeWire) {
+            statusTip.textContent = '配線中: 終了コネクタをクリック (Escで取消)';
+          } else if (state.draggingComponent) {
+            statusTip.textContent = 'ドラッグで機器を移動';
+          } else if (state.draggingJunction && state.draggingJunction.isDragging) {
+            statusTip.textContent = 'ドラッグで接続点を移動';
+          } else {
+            statusTip.textContent = '器具パレットで器具を追加し、配線したいコネクタをダブルクリックしてください';
+          }
+        }
+
+        function simplifyWirePoints(wire) {
+          const simplified = [wire.points[0]];
+          for (let i = 1; i < wire.points.length; i += 1) {
+            const prev = simplified[simplified.length - 1];
+            const point = wire.points[i];
+            if (Math.hypot(point.x - prev.x, point.y - prev.y) > 0.5) {
+              simplified.push(point);
+            }
+          }
+          wire.points = simplified;
+        }
+
+        function resizeCanvas() {
+          const rect = canvas.getBoundingClientRect();
+          if (!rect.width || !rect.height) return;
+          const ratio = window.devicePixelRatio || 1;
+          canvas.width = rect.width * ratio;
+          canvas.height = rect.height * ratio;
+          ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+          draw();
+        }
+
+        function draw() {
+          evaluateCircuit();
+          updateLampStatusUI();
+          const ratio = window.devicePixelRatio || 1;
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.restore();
+
+          const width = canvas.width / ratio;
+          const height = canvas.height / ratio;
+
+          drawGrid(width, height);
+          drawWires(state.wires);
+          if (state.activeWire) {
+            drawWire(state.activeWire, { preview: true });
+          }
+          drawComponents();
+          drawJunctions();
+        }
+
+        function drawGrid(width, height) {
+          const spacing = 40;
+          ctx.save();
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let x = spacing; x < width; x += spacing) {
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+          }
+          for (let y = spacing; y < height; y += spacing) {
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        function drawWires(wires, options = {}) {
+          wires.forEach(wire => {
+            syncWireEndpoints(wire);
+            const highlight = state.toolMode === 'erase' && state.hoverWireId === wire.id;
+            drawWire(wire, { ...options, highlight });
+          });
+        }
+
+        function drawWire(wire, { preview = false, highlight = false } = {}) {
+          if (wire.points.length < 2) return;
+          const color = getConductorStroke(wire.color || 'black');
+          ctx.save();
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.strokeStyle = color;
+          ctx.lineWidth = highlight ? 5 : 4;
+          if (preview) {
+            ctx.globalAlpha = 0.7;
+            ctx.setLineDash([6, 6]);
+          } else if (highlight) {
+            ctx.setLineDash([4, 4]);
+          }
+          ctx.beginPath();
+          ctx.moveTo(wire.points[0].x, wire.points[0].y);
+          for (let i = 1; i < wire.points.length; i += 1) {
+            ctx.lineTo(wire.points[i].x, wire.points[i].y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        function drawComponents() {
+          state.components.forEach(component => {
+            switch (component.type) {
+              case 'power':
+                drawPower(component);
+                break;
+              case 'switch':
+                drawSwitch(component);
+                break;
+              case 'outlet':
+                drawOutlet(component);
+                break;
+              case 'lamp':
+                drawLamp(component);
+                break;
+              case 'pilot':
+                drawPilotLamp(component);
+                break;
+              default:
+                drawGeneric(component);
+                break;
+            }
+            component.connectors.forEach(connector => {
+              const position = getConnectorPositionById(connector.id);
+              drawConnectorNode(position, connector);
+            });
+          });
+        }
+
+        function drawPower(component) {
+          const { x, y } = component.position;
+          const { width, height } = component.size;
+          ctx.save();
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, width, height);
+          ctx.fillStyle = '#f8fafc';
+          ctx.fillRect(x, y, width, height);
+          ctx.fillStyle = '#1e293b';
+          ctx.font = '14px "Segoe UI", sans-serif';
+          ctx.textBaseline = 'top';
+          const lines = component.label.split('\n');
+          lines.forEach((line, idx) => ctx.fillText(line, x + 16, y + 16 + idx * 18));
+          ctx.restore();
+        }
+
+        function drawSwitch(component) {
+          const { x, y } = component.position;
+          const { width, height } = component.size;
+          ctx.save();
+          const isOn = state.switchClosed;
+          ctx.strokeStyle = '#1f2937';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(x, y, width, height);
+          const leftContact = {
+            x: x + 22,
+            y: y + height / 2
+          };
+          const rightContact = {
+            x: x + width - 22,
+            y: y + height / 2
+          };
+          ctx.fillStyle = '#0f172a';
+          ctx.beginPath();
+          ctx.arc(leftContact.x, leftContact.y, 5, 0, Math.PI * 2);
+          ctx.arc(rightContact.x, rightContact.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(leftContact.x, leftContact.y);
+          if (isOn) {
+            ctx.lineTo(rightContact.x, rightContact.y);
+          } else {
+            ctx.lineTo(rightContact.x - 12, rightContact.y - 18);
+          }
+          ctx.stroke();
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(leftContact.x - 14, leftContact.y);
+          ctx.lineTo(leftContact.x - 5, leftContact.y);
+          ctx.moveTo(rightContact.x + 5, rightContact.y);
+          ctx.lineTo(rightContact.x + 14, rightContact.y);
+          ctx.stroke();
+          ctx.font = '14px "Segoe UI", sans-serif';
+          ctx.fillStyle = '#1f2937';
+          ctx.textAlign = 'center';
+          ctx.fillText(component.label, x + width / 2, y - 10);
+          ctx.font = '12px "Segoe UI", sans-serif';
+          ctx.fillText(isOn ? '入' : '切', x + width / 2, y + height - 12);
+          const switchLabel = state.pairingLabels.get(component.id);
+          if (switchLabel) {
+            ctx.font = 'bold 18px "Segoe UI", sans-serif';
+            ctx.fillStyle = '#c2410c';
+            ctx.textAlign = 'right';
+            ctx.fillText(switchLabel, x + width - 6, y + 18);
+          }
+          ctx.restore();
+        }
+
+        function drawOutlet(component) {
+          const { x, y } = component.position;
+          const { width, height } = component.size;
+          ctx.save();
+          ctx.strokeStyle = '#1f2937';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(x, y, width, height);
+          const cx = x + width / 2;
+          const cy = y + height / 2;
+          const radius = Math.min(width, height) / 2.6;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.stroke();
+          const slotOffset = radius * 0.55;
+          const slotHeight = radius * 0.9;
+          ctx.beginPath();
+          ctx.moveTo(cx - slotOffset, cy - slotHeight / 2);
+          ctx.lineTo(cx - slotOffset, cy + slotHeight / 2);
+          ctx.moveTo(cx + slotOffset, cy - slotHeight / 2);
+          ctx.lineTo(cx + slotOffset, cy + slotHeight / 2);
+          ctx.stroke();
+          ctx.font = '14px "Segoe UI", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#1f2937';
+          ctx.fillText(component.label, cx, y - 12);
+          ctx.restore();
+        }
+
+        function drawLamp(component) {
+          const { x, y } = component.position;
+          const { width, height } = component.size;
+          ctx.save();
+          const cx = x + width / 2;
+          const cy = y + height / 2;
+          const isOn = state.lampOn;
+          const radius = Math.min(width, height) / 2.8;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.fillStyle = isOn ? '#fde68a' : '#f8fafc';
+          ctx.fill();
+          ctx.strokeStyle = isOn ? '#f59e0b' : '#1f2937';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          ctx.font = 'bold 26px "Segoe UI", sans-serif';
+          ctx.fillStyle = isOn ? '#b45309' : '#1f2937';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('R', cx, cy);
+          ctx.font = '14px "Segoe UI", sans-serif';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText(component.label, cx, y - 12);
+          const lampLabel = state.pairingLabels.get(component.id);
+          if (lampLabel) {
+            ctx.font = 'bold 18px "Segoe UI", sans-serif';
+            ctx.fillStyle = '#c2410c';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(lampLabel, cx, y + height + 16);
+          }
+          ctx.restore();
+        }
+
+        function drawPilotLamp(component) {
+          const { x, y } = component.position;
+          const { width, height } = component.size;
+          ctx.save();
+          const cx = x + width / 2;
+          const cy = y + height / 2;
+          const isOn = state.pilotOn;
+          const radius = Math.min(width, height) / 3.6;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.fillStyle = isOn ? '#fde68a' : '#f8fafc';
+          ctx.fill();
+          ctx.strokeStyle = isOn ? '#f59e0b' : '#1f2937';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.font = 'bold 18px "Segoe UI", sans-serif';
+          ctx.fillStyle = isOn ? '#b45309' : '#1f2937';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('P', cx, cy);
+          ctx.font = '12px "Segoe UI", sans-serif';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText(component.label, cx, y - 8);
+          const pilotLabel = state.pairingLabels.get(component.id);
+          if (pilotLabel) {
+            ctx.font = 'bold 16px "Segoe UI", sans-serif';
+            ctx.fillStyle = '#c2410c';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(pilotLabel, cx, y + height + 14);
+          }
+          ctx.restore();
+        }
+
+        function drawGeneric(component) {
+          const { x, y } = component.position;
+          const { width, height } = component.size;
+          ctx.save();
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, width, height);
+          ctx.font = '14px "Segoe UI", sans-serif';
+          ctx.fillStyle = '#0f172a';
+          ctx.textAlign = 'center';
+          ctx.fillText(component.label, x + width / 2, y - 12);
+          ctx.restore();
+        }
+
+        function drawConnectorNode(position, connector) {
+          if (!position) return;
+          ctx.save();
+          const radius = 8;
+          const isHover = state.hoverConnectorId === connector.id;
+          ctx.fillStyle = isHover ? '#dbeafe' : '#ffffff';
+          ctx.strokeStyle = isHover ? '#2563eb' : '#0f172a';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.font = '12px "Segoe UI", sans-serif';
+          ctx.fillStyle = '#0f172a';
+          ctx.textAlign = 'center';
+          ctx.fillText(connector.label, position.x, position.y + 20);
+          ctx.restore();
+        }
+
+        function drawJunctions() {
+          state.junctions.forEach(junction => {
+            ctx.save();
+            const isHover = state.hoverConnectorId === junction.id;
+            ctx.fillStyle = isHover ? '#fef3c7' : '#f1f5f9';
+            ctx.strokeStyle = isHover ? '#d97706' : '#475569';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(junction.x, junction.y, 7, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.font = '11px "Segoe UI", sans-serif';
+            ctx.fillStyle = '#b45309';
+            ctx.textAlign = 'center';
+            ctx.fillText(junction.label, junction.x, junction.y + 18);
+            ctx.restore();
+          });
+        }
+
+        function createJunction(point) {
+          state.counters.junction += 1;
+          const junction = {
+            id: 'junction-' + state.counters.junction,
+            label: 'J' + state.counters.junction,
+            x: point.x,
+            y: point.y
+          };
+          state.junctions.push(junction);
+          state.junctionIndex.set(junction.id, junction);
+          return junction;
+        }
+
+        function findJunctionNear(point, radius = 12) {
+          return (
+            state.junctions.find(junction => distance(point, junction) <= radius) || null
+          );
+        }
+
+        function removeJunction(junction) {
+          state.junctions = state.junctions.filter(j => j.id !== junction.id);
+          state.junctionIndex.delete(junction.id);
+          state.wires = state.wires.filter(wire => wire.startConnectorId !== junction.id && wire.endConnectorId !== junction.id);
+        }
+
+        function evaluateCircuit() {
+          const adjacency = new Map();
+
+          function addEdge(a, b) {
+            if (!a || !b) return;
+            if (!adjacency.has(a)) adjacency.set(a, new Set());
+            if (!adjacency.has(b)) adjacency.set(b, new Set());
+            adjacency.get(a).add(b);
+            adjacency.get(b).add(a);
+          }
+
+          state.wires.forEach(wire => {
+            if (!wire.startConnectorId || !wire.endConnectorId) return;
+            addEdge(wire.startConnectorId, wire.endConnectorId);
+          });
+
+          const primaryPowerId = state.primaryIds.power;
+          const primaryLampId = state.primaryIds.lamp;
+          const primarySwitchId = state.primaryIds.switch;
+
+          const powerHotId = primaryPowerId ? getConnectorId(primaryPowerId, 'hot') : null;
+          const powerNeutralId = primaryPowerId ? getConnectorId(primaryPowerId, 'neutral') : null;
+          const lampHotId = primaryLampId ? getConnectorId(primaryLampId, 'hot') : null;
+          const lampNeutralId = primaryLampId ? getConnectorId(primaryLampId, 'neutral') : null;
+          const pilotHotIds = state.components
+            .filter(component => component.type === 'pilot')
+            .map(component => getConnectorId(component.id, 'hot'));
+          const pilotNeutralIds = state.components
+            .filter(component => component.type === 'pilot')
+            .map(component => getConnectorId(component.id, 'neutral'));
+
+          if (state.switchClosed && primarySwitchId) {
+            const switchInId = getConnectorId(primarySwitchId, 'in');
+            const switchOutId = getConnectorId(primarySwitchId, 'out');
+            addEdge(switchInId, switchOutId);
+          }
+
+          const hotConnected = hasPath(powerHotId, lampHotId);
+          const neutralConnected = hasPath(lampNeutralId, powerNeutralId);
+
+          const lampOn = Boolean(hotConnected && neutralConnected);
+          const pilotOn = pilotHotIds.some((hotId, index) => {
+            const neutralId = pilotNeutralIds[index];
+            return hasPath(powerHotId, hotId) && hasPath(neutralId, powerNeutralId);
+          });
+
+          state.lampOn = lampOn;
+          state.pilotOn = pilotOn;
+          updateSwitchPairings(adjacency);
+
+          function hasPath(start, target) {
+            if (!start || !target) return false;
+            if (!adjacency.has(start) || !adjacency.has(target)) return false;
+            const visited = new Set([start]);
+            const queue = [start];
+            while (queue.length) {
+              const node = queue.shift();
+              if (node === target) return true;
+              adjacency.get(node).forEach(next => {
+                if (!visited.has(next)) {
+                  visited.add(next);
+                  queue.push(next);
+                }
+              });
+            }
+            return false;
+          }
+        }
+
+        function updateSwitchPairings(adjacency) {
+          state.pairingLabels = new Map();
+          if (!adjacency) return;
+          const usedLoads = new Set();
+          const pairs = [];
+          state.components.forEach(component => {
+            if (component.type !== 'switch') return;
+            const outConnector = component.connectors.find(connector => connector.key === 'out');
+            if (!outConnector) return;
+            const loadConnectorId = findLoadForSwitch(outConnector.id, adjacency, usedLoads);
+            if (!loadConnectorId) return;
+            const loadEntry = componentConnectorIndex.get(loadConnectorId);
+            if (!loadEntry) return;
+            usedLoads.add(loadEntry.component.id);
+            pairs.push({ switchId: component.id, loadId: loadEntry.component.id });
+          });
+
+          pairs.forEach((pair, index) => {
+            const label = pairingKana[index % pairingKana.length];
+            state.pairingLabels.set(pair.switchId, label);
+            state.pairingLabels.set(pair.loadId, label);
+          });
+        }
+
+        function findLoadForSwitch(startConnectorId, adjacency, usedLoads) {
+          const queue = [startConnectorId];
+          const visited = new Set([startConnectorId]);
+          while (queue.length) {
+            const current = queue.shift();
+            const neighbors = adjacency.get(current);
+            if (!neighbors) continue;
+            for (const neighbor of neighbors) {
+              if (visited.has(neighbor)) continue;
+              visited.add(neighbor);
+              const entry = componentConnectorIndex.get(neighbor);
+              if (entry) {
+                const { component, connector } = entry;
+                if ((component.type === 'lamp' || component.type === 'pilot') && connector.role === 'switched') {
+                  if (!usedLoads.has(component.id)) {
+                    return neighbor;
+                  }
+                }
+                if (component.type === 'switch' && connector.key === 'out') {
+                  continue;
+                }
+              }
+              queue.push(neighbor);
+            }
+          }
+          return null;
+        }
+
+        function validateConductorAssignments() {
+          const connectorMap = new Map();
+          state.components.forEach(component => {
+            component.connectors.forEach(connector => {
+              connectorMap.set(connector.id, { component, connector });
+            });
+          });
+
+          const conductorMap = new Map();
+          state.wires.forEach(wire => {
+            const key = [wire.startConnectorId, wire.endConnectorId].slice().sort().join('::');
+            [wire.startConnectorId, wire.endConnectorId].forEach(connectorId => {
+              if (!connectorMap.has(connectorId)) return;
+              const entry = connectorMap.get(connectorId);
+              const componentId = entry.component.id;
+              if (!conductorMap.has(componentId)) {
+                conductorMap.set(componentId, new Map());
+              }
+              const map = conductorMap.get(componentId);
+              if (!map.has(connectorId)) {
+                map.set(connectorId, new Map());
+              }
+              const connectionMap = map.get(connectorId);
+              if (!connectionMap.has(key)) {
+                connectionMap.set(key, new Set());
+              }
+              connectionMap.get(key).add(wire.color);
+            });
+          });
+
+          const errors = [];
+          const warnings = [];
+          conductorMap.forEach((connections, componentId) => {
+            const component = getComponentById(componentId);
+            if (!component) return;
+            const involvedColors = new Set();
+            connections.forEach(connectionMap => {
+              connectionMap.forEach(colorSet => {
+                colorSet.forEach(color => involvedColors.add(color));
+              });
+            });
+            const connectorCount = connections.size;
+            const colorSet = new Set(involvedColors);
+            let isValid = false;
+            if (component.type === 'switch') {
+              if (connectorCount < 2) return;
+              const combos = [
+                ['black', 'blue'],
+                ['black', 'red']
+              ];
+              isValid = combos.some(combo =>
+                combo.length === colorSet.size && combo.every(color => colorSet.has(color))
+              );
+            } else {
+              const requiredColors = component.connectors
+                .map(connector => connector.color)
+                .filter(color => color);
+              const uniqueRequiredColors = Array.from(new Set(requiredColors));
+              if (connectorCount < uniqueRequiredColors.length) {
+                return;
+              }
+              const sortedInvolved = Array.from(colorSet).sort();
+              const sortedRequired = uniqueRequiredColors.slice().sort();
+              if (sortedInvolved.length === sortedRequired.length) {
+                isValid = sortedInvolved.every((color, index) => color === sortedRequired[index]);
+              }
+            }
+            if (isValid) {
+              return;
+            }
+
+            const template = componentTemplates[component.type];
+            const name = template ? template.displayName : component.label;
+            const colors = Array.from(colorSet).map(colorName => colorDisplayName(colorName)).join('、') || '未接続';
+            errors.push(name + 'の芯線色が不正です: ' + colors);
+          });
+
+          const connectorUsage = new Map();
+          state.wires.forEach(wire => {
+            [wire.startConnectorId, wire.endConnectorId].forEach(connectorId => {
+              if (!connectorMap.has(connectorId)) return;
+              if (!connectorUsage.has(connectorId)) {
+                const entry = connectorMap.get(connectorId);
+                connectorUsage.set(connectorId, { colors: new Set(), count: 0, component: entry.component, connector: entry.connector });
+              }
+              const usage = connectorUsage.get(connectorId);
+              usage.count += 1;
+              usage.colors.add(wire.color);
+            });
+          });
+
+          connectorUsage.forEach(({ colors, count, component, connector }) => {
+            if (count <= 1) return;
+            if (component.type === 'switch' || component.type === 'pilot') return;
+            const template = componentTemplates[component.type];
+            const name = template ? template.displayName : component.label;
+            const expectedColor = connector.color;
+            const uniqueColors = Array.from(colors);
+            if (count === 2 && uniqueColors.length === 1 && uniqueColors[0] === expectedColor) {
+              return;
+            }
+            warnings.push(name + 'のコネクタ"' + connector.label + '"に複数芯線が接続されています');
+          });
+
+          return { errors, warnings };
+        }
+
+        function colorDisplayName(color) {
+          const names = { black: '黒', blue: '青', red: '赤' };
+          return names[color] || color;
+        }
+
+        function insertJunction(wire, segmentIndex, point) {
+          const junction = createJunction(point);
+
+          const originalPoints = wire.points.map(p => ({ x: p.x, y: p.y }));
+          const headPoints = originalPoints.slice(0, segmentIndex + 1);
+          const tailPoints = originalPoints.slice(segmentIndex + 1);
+          const junctionPoint = { x: point.x, y: point.y };
+
+          const originalEndConnectorId = wire.endConnectorId || null;
+
+          wire.points = [...headPoints, { x: junctionPoint.x, y: junctionPoint.y }];
+          wire.endConnectorId = junction.id;
+          simplifyWirePoints(wire);
+
+          if (originalEndConnectorId) {
+            const tailColor = state.selectedColor !== wire.color ? state.selectedColor : wire.color;
+            state.counters.wire += 1;
+            const newWire = {
+              id: 'wire-' + state.counters.wire,
+              color: tailColor,
+              points: [{ x: junctionPoint.x, y: junctionPoint.y }, ...tailPoints.map(p => ({ x: p.x, y: p.y }))],
+              startConnectorId: junction.id,
+              endConnectorId: originalEndConnectorId
+            };
+            simplifyWirePoints(newWire);
+            const wireIndex = state.wires.findIndex(item => item.id === wire.id);
+            if (wireIndex >= 0) {
+              state.wires.splice(wireIndex + 1, 0, newWire);
+            } else {
+              state.wires.push(newWire);
+            }
+          }
+
+          return junction;
+        }
+
+        function syncWireEndpoints(wire) {
+          if (wire.startConnectorId) {
+            const startPos = getConnectorPositionById(wire.startConnectorId);
+            if (startPos) {
+              wire.points[0] = { x: startPos.x, y: startPos.y };
+            }
+          }
+          if (wire.endConnectorId) {
+            const endPos = getConnectorPositionById(wire.endConnectorId);
+            if (endPos) {
+              wire.points[wire.points.length - 1] = { x: endPos.x, y: endPos.y };
+            }
+          }
+        }
+
+        function findConnectorAt(point) {
+          const radius = 12;
+          for (const component of state.components) {
+            for (const connector of component.connectors) {
+              const position = getConnectorPositionById(connector.id);
+              if (position && distance(point, position) <= radius) {
+                return { id: connector.id, kind: 'component', component, connector, position };
+              }
+            }
+          }
+          for (const junction of state.junctions) {
+            if (distance(point, junction) <= radius) {
+              return { id: junction.id, kind: 'junction', junction, position: { x: junction.x, y: junction.y } };
+            }
+          }
+          return null;
+        }
+
+        function findComponentAt(point) {
+          for (let i = state.components.length - 1; i >= 0; i -= 1) {
+            const component = state.components[i];
+            const { position, size } = component;
+            if (
+              point.x >= position.x &&
+              point.x <= position.x + size.width &&
+              point.y >= position.y &&
+              point.y <= position.y + size.height
+            ) {
+              return component;
+            }
+          }
+          return null;
+        }
+
+        function findWireSegment(point) {
+          let closest = null;
+          state.wires.forEach(wire => {
+            for (let i = 0; i < wire.points.length - 1; i += 1) {
+              const start = wire.points[i];
+              const end = wire.points[i + 1];
+              const projection = projectPointToSegment(point, start, end);
+              if (!projection) continue;
+              const dist = distance(point, projection);
+              if (!closest || dist < closest.distance) {
+                closest = { wire, segmentIndex: i, distance: dist, projection };
+              }
+            }
+          });
+          return closest;
+        }
+
+        function getConnectorPositionById(id) {
+          if (componentConnectorIndex.has(id)) {
+            const { component, connector } = componentConnectorIndex.get(id);
+            return {
+              x: component.position.x + connector.offset.x,
+              y: component.position.y + connector.offset.y
+            };
+          }
+          if (state.junctionIndex.has(id)) {
+            const junction = state.junctionIndex.get(id);
+            return { x: junction.x, y: junction.y };
+          }
+          return null;
+        }
+
+        function getConductorStroke(color) {
+          const palette = { black: '#111827', blue: '#1d4ed8', red: '#dc2626' };
+          return palette[color] || color;
+        }
+
+        function distance(a, b) {
+          return Math.hypot(a.x - b.x, a.y - b.y);
+        }
+
+        function projectPointToSegment(point, start, end) {
+          const dx = end.x - start.x;
+          const dy = end.y - start.y;
+          const lenSq = dx * dx + dy * dy;
+          if (lenSq === 0) return null;
+          let t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lenSq;
+          t = Math.max(0, Math.min(1, t));
+          return { x: start.x + t * dx, y: start.y + t * dy };
+        }
+
+        function getCanvasPoint(evt) {
+          const rect = canvas.getBoundingClientRect();
+          return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+        }
+
+        function debounce(fn, delay) {
+          let timer = null;
+          return (...args) => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => fn(...args), delay);
+          };
+        }
+
+        init();
+      })();
+    </script>
+  </body>
+  </html>
