@@ -420,6 +420,8 @@
           }
         };
 
+        const rotatableComponentTypes = new Set(['switch', 'outlet', 'lamp', 'pilot']);
+
         const initialComponentLayout = [
           { type: 'power' },
           { type: 'switch' },
@@ -775,21 +777,35 @@
           state.selectedGauge = snapshot.selectedGauge || conductorGaugeOptions[0].value;
           state.selectedSleeveType = snapshot.selectedSleeveType || sleeveOptions[0].id;
           state.toolMode = snapshot.toolMode || 'draw';
-          state.components = snapshot.components.map(component => ({
-            id: component.id,
-            type: component.type,
-            label: component.label,
-            position: { x: component.position.x, y: component.position.y },
-            size: { width: component.size.width, height: component.size.height },
-            connectors: component.connectors.map(connector => ({
-              id: connector.id,
-              key: connector.key,
-              label: connector.label,
-              color: connector.color,
-              role: connector.role,
-              offset: { x: connector.offset.x, y: connector.offset.y }
-            }))
-          }));
+          state.components = snapshot.components.map(component => {
+            const template = componentTemplates[component.type];
+            const baseSize = component.baseSize
+              ? { width: component.baseSize.width, height: component.baseSize.height }
+              : template
+                ? { width: template.size.width, height: template.size.height }
+                : { width: component.size.width, height: component.size.height };
+            const rotation = normalizeRotation(typeof component.rotation === 'number' ? component.rotation : 0);
+            const size = component.size
+              ? { width: component.size.width, height: component.size.height }
+              : getRotatedSize(baseSize, rotation);
+            return {
+              id: component.id,
+              type: component.type,
+              label: component.label,
+              position: { x: component.position.x, y: component.position.y },
+              size,
+              baseSize,
+              rotation,
+              connectors: component.connectors.map(connector => ({
+                id: connector.id,
+                key: connector.key,
+                label: connector.label,
+                color: connector.color,
+                role: connector.role,
+                offset: { x: connector.offset.x, y: connector.offset.y }
+              }))
+            };
+          });
           state.wires = snapshot.wires.map(wire => ({
             id: wire.id,
             color: wire.color,
@@ -946,12 +962,16 @@
           state.counters.component[type] += 1;
           const id = type + '-' + state.counters.component[type];
           const basePosition = position || template.defaultPosition || { x: 120, y: 120 };
+          const baseSize = { width: template.size.width, height: template.size.height };
+          const rotation = 0;
           const component = {
             id,
             type: template.type,
             label: template.label,
             position: { x: basePosition.x, y: basePosition.y },
-            size: { width: template.size.width, height: template.size.height },
+            size: getRotatedSize(baseSize, rotation),
+            baseSize,
+            rotation,
             connectors: template.connectors.map(connector => ({
               key: connector.key,
               label: connector.label,
@@ -962,6 +982,27 @@
             }))
           };
           return component;
+        }
+
+        function isRotatableType(type) {
+          return rotatableComponentTypes.has(type);
+        }
+
+        function canRotateComponent(component) {
+          return Boolean(component && isRotatableType(component.type));
+        }
+
+        function rotateComponentInstance(component, step = 90) {
+          if (!canRotateComponent(component)) return;
+          const baseSize = component.baseSize || component.size;
+          const center = getComponentCenter(component);
+          const nextRotation = normalizeRotation((component.rotation || 0) + step);
+          const newSize = getRotatedSize(baseSize, nextRotation);
+          component.rotation = nextRotation;
+          component.size.width = newSize.width;
+          component.size.height = newSize.height;
+          component.position.x = center.x - newSize.width / 2;
+          component.position.y = center.y - newSize.height / 2;
         }
 
         function rebuildConnectorIndex() {
@@ -1262,6 +1303,21 @@
           if (!evt.ctrlKey) {
             closeSleeveMenu();
             closeWireMenu();
+          }
+
+          if (evt.altKey && !evt.ctrlKey) {
+            const targetComponent = findComponentAt(point);
+            if (targetComponent && canRotateComponent(targetComponent)) {
+              recordHistory();
+              const step = evt.shiftKey ? -90 : 90;
+              rotateComponentInstance(targetComponent, step);
+              const template = componentTemplates[targetComponent.type];
+              const displayName = template ? template.displayName : (targetComponent.label || '').replace(/\n/g, ' ');
+              const directionLabel = step > 0 ? '時計回りに' : '反時計回りに';
+              updateStatusTip((displayName || '器具') + 'を' + directionLabel + '90°回転しました');
+              draw();
+              return;
+            }
           }
 
           if (evt.ctrlKey) {
@@ -1824,6 +1880,18 @@
           });
         }
 
+        function drawComponentWithRotation(component, drawFn) {
+          const baseSize = component.baseSize || component.size;
+          const rotation = normalizeRotation(component.rotation || 0);
+          const center = getComponentCenter(component);
+          ctx.save();
+          ctx.translate(center.x, center.y);
+          ctx.rotate((rotation * Math.PI) / 180);
+          ctx.translate(-baseSize.width / 2, -baseSize.height / 2);
+          drawFn({ x: 0, y: 0, width: baseSize.width, height: baseSize.height });
+          ctx.restore();
+        }
+
         function drawPower(component) {
           const { x, y } = component.position;
           const { width, height } = component.size;
@@ -1842,168 +1910,198 @@
         }
 
         function drawSwitch(component) {
-          const { x, y } = component.position;
-          const { width, height } = component.size;
+          drawComponentWithRotation(component, ({ width, height }) => {
+            const x = 0;
+            const y = 0;
+            ctx.save();
+            const isOn = state.switchClosed;
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x, y, width, height);
+            const leftContact = {
+              x: x + 22,
+              y: y + height / 2
+            };
+            const rightContact = {
+              x: x + width - 22,
+              y: y + height / 2
+            };
+            ctx.fillStyle = '#0f172a';
+            ctx.beginPath();
+            ctx.arc(leftContact.x, leftContact.y, 5, 0, Math.PI * 2);
+            ctx.arc(rightContact.x, rightContact.y, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(leftContact.x, leftContact.y);
+            if (isOn) {
+              ctx.lineTo(rightContact.x, rightContact.y);
+            } else {
+              ctx.lineTo(rightContact.x - 12, rightContact.y - 18);
+            }
+            ctx.stroke();
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(leftContact.x - 14, leftContact.y);
+            ctx.lineTo(leftContact.x - 5, leftContact.y);
+            ctx.moveTo(rightContact.x + 5, rightContact.y);
+            ctx.lineTo(rightContact.x + 14, rightContact.y);
+            ctx.stroke();
+            ctx.restore();
+          });
+          const { position, size } = component;
+          const cx = position.x + size.width / 2;
+          const switchLabel = getPairingDisplayLabel(component.id);
           ctx.save();
-          const isOn = state.switchClosed;
-          ctx.strokeStyle = '#1f2937';
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(x, y, width, height);
-          const leftContact = {
-            x: x + 22,
-            y: y + height / 2
-          };
-          const rightContact = {
-            x: x + width - 22,
-            y: y + height / 2
-          };
-          ctx.fillStyle = '#0f172a';
-          ctx.beginPath();
-          ctx.arc(leftContact.x, leftContact.y, 5, 0, Math.PI * 2);
-          ctx.arc(rightContact.x, rightContact.y, 5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = '#0f172a';
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          ctx.moveTo(leftContact.x, leftContact.y);
-          if (isOn) {
-            ctx.lineTo(rightContact.x, rightContact.y);
-          } else {
-            ctx.lineTo(rightContact.x - 12, rightContact.y - 18);
-          }
-          ctx.stroke();
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(leftContact.x - 14, leftContact.y);
-          ctx.lineTo(leftContact.x - 5, leftContact.y);
-          ctx.moveTo(rightContact.x + 5, rightContact.y);
-          ctx.lineTo(rightContact.x + 14, rightContact.y);
-          ctx.stroke();
           ctx.font = '14px "Segoe UI", sans-serif';
           ctx.fillStyle = '#1f2937';
           ctx.textAlign = 'center';
-          ctx.fillText(component.label, x + width / 2, y - 10);
+          ctx.fillText(component.label, cx, position.y - 10);
           ctx.font = '12px "Segoe UI", sans-serif';
-          ctx.fillText(isOn ? '入' : '切', x + width / 2, y + height - 12);
-          const switchLabel = getPairingDisplayLabel(component.id);
+          ctx.fillText(state.switchClosed ? '入' : '切', cx, position.y + size.height - 12);
           if (switchLabel) {
             ctx.font = 'bold 18px "Segoe UI", sans-serif';
             ctx.fillStyle = '#c2410c';
             ctx.textAlign = 'right';
-            ctx.fillText(switchLabel, x + width - 6, y + 18);
+            ctx.fillText(switchLabel, position.x + size.width - 6, position.y + 18);
           }
           ctx.restore();
         }
 
         function drawOutlet(component) {
-          const { x, y } = component.position;
-          const { width, height } = component.size;
-          ctx.save();
           const status = state.outletStatuses.get(component.id);
           const isEnergized = status ? status.energized : false;
           const isPartial = status ? !status.energized && (status.hotConnected || status.neutralConnected) : false;
           const ringColor = isEnergized ? '#15803d' : isPartial ? '#b45309' : '#1f2937';
           const fillColor = isEnergized ? '#ecfdf5' : '#ffffff';
           const labelColor = isEnergized ? '#166534' : isPartial ? '#b45309' : '#1f2937';
-          ctx.strokeStyle = '#1f2937';
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(x, y, width, height);
-          const cx = x + width / 2;
-          const cy = y + height / 2;
-          const radius = Math.min(width, height) / 2.6;
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-          ctx.fillStyle = fillColor;
-          ctx.fill();
-          ctx.strokeStyle = ringColor;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          const slotOffset = radius * 0.55;
-          const slotHeight = radius * 0.9;
-          ctx.beginPath();
-          ctx.moveTo(cx - slotOffset, cy - slotHeight / 2);
-          ctx.lineTo(cx - slotOffset, cy + slotHeight / 2);
-          ctx.moveTo(cx + slotOffset, cy - slotHeight / 2);
-          ctx.lineTo(cx + slotOffset, cy + slotHeight / 2);
-          ctx.strokeStyle = ringColor;
-          ctx.lineWidth = 2;
-          ctx.stroke();
+          drawComponentWithRotation(component, ({ width, height }) => {
+            const x = 0;
+            const y = 0;
+            const cx = x + width / 2;
+            const cy = y + height / 2;
+            const radius = Math.min(width, height) / 2.6;
+            ctx.save();
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x, y, width, height);
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.fillStyle = fillColor;
+            ctx.fill();
+            ctx.strokeStyle = ringColor;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            const slotOffset = radius * 0.55;
+            const slotHeight = radius * 0.9;
+            ctx.beginPath();
+            ctx.moveTo(cx - slotOffset, cy - slotHeight / 2);
+            ctx.lineTo(cx - slotOffset, cy + slotHeight / 2);
+            ctx.moveTo(cx + slotOffset, cy - slotHeight / 2);
+            ctx.lineTo(cx + slotOffset, cy + slotHeight / 2);
+            ctx.strokeStyle = ringColor;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.restore();
+          });
+          const { position, size } = component;
+          const cx = position.x + size.width / 2;
+          ctx.save();
           ctx.font = '14px "Segoe UI", sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'alphabetic';
           ctx.fillStyle = labelColor;
-          ctx.fillText(component.label, cx, y - 12);
+          ctx.fillText(component.label, cx, position.y - 12);
           if (status) {
             ctx.font = '12px "Segoe UI", sans-serif';
-            ctx.fillText(isEnergized ? '使用可' : isPartial ? '要確認' : '未接続', cx, y + height - 12);
+            ctx.fillText(
+              isEnergized ? '使用可' : isPartial ? '要確認' : '未接続',
+              cx,
+              position.y + size.height - 12
+            );
           }
           ctx.restore();
         }
 
         function drawLamp(component) {
-          const { x, y } = component.position;
-          const { width, height } = component.size;
-          ctx.save();
-          const cx = x + width / 2;
-          const cy = y + height / 2;
           const isOn = state.lampOn;
-          const radius = Math.min(width, height) / 2.8;
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-          ctx.fillStyle = isOn ? '#fde68a' : '#f8fafc';
-          ctx.fill();
-          ctx.strokeStyle = isOn ? '#f59e0b' : '#1f2937';
-          ctx.lineWidth = 3;
-          ctx.stroke();
-          ctx.font = 'bold 26px "Segoe UI", sans-serif';
-          ctx.fillStyle = isOn ? '#b45309' : '#1f2937';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('R', cx, cy);
-          ctx.font = '14px "Segoe UI", sans-serif';
-          ctx.textBaseline = 'alphabetic';
-          ctx.fillText(component.label, cx, y - 12);
+          drawComponentWithRotation(component, ({ width, height }) => {
+            const x = 0;
+            const y = 0;
+            const cx = x + width / 2;
+            const cy = y + height / 2;
+            const radius = Math.min(width, height) / 2.8;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.fillStyle = isOn ? '#fde68a' : '#f8fafc';
+            ctx.fill();
+            ctx.strokeStyle = isOn ? '#f59e0b' : '#1f2937';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            ctx.font = 'bold 26px "Segoe UI", sans-serif';
+            ctx.fillStyle = isOn ? '#b45309' : '#1f2937';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('R', cx, cy);
+            ctx.restore();
+          });
+          const { position, size } = component;
+          const cx = position.x + size.width / 2;
           const lampLabel = getPairingDisplayLabel(component.id);
+          ctx.save();
+          ctx.font = '14px "Segoe UI", sans-serif';
+          ctx.fillStyle = '#1f2937';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText(component.label, cx, position.y - 12);
           if (lampLabel) {
             ctx.font = 'bold 18px "Segoe UI", sans-serif';
             ctx.fillStyle = '#c2410c';
-            ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(lampLabel, cx, y + height + 16);
+            ctx.fillText(lampLabel, cx, position.y + size.height + 16);
           }
           ctx.restore();
         }
 
         function drawPilotLamp(component) {
-          const { x, y } = component.position;
-          const { width, height } = component.size;
-          ctx.save();
-          const cx = x + width / 2;
-          const cy = y + height / 2;
           const isOn = state.pilotOn;
-          const radius = Math.min(width, height) / 3.6;
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-          ctx.fillStyle = isOn ? '#fde68a' : '#f8fafc';
-          ctx.fill();
-          ctx.strokeStyle = isOn ? '#f59e0b' : '#1f2937';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          ctx.font = 'bold 18px "Segoe UI", sans-serif';
-          ctx.fillStyle = isOn ? '#b45309' : '#1f2937';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('P', cx, cy);
-          ctx.font = '12px "Segoe UI", sans-serif';
-          ctx.textBaseline = 'alphabetic';
-          ctx.fillText(component.label, cx, y - 8);
+          drawComponentWithRotation(component, ({ width, height }) => {
+            const x = 0;
+            const y = 0;
+            const cx = x + width / 2;
+            const cy = y + height / 2;
+            const radius = Math.min(width, height) / 3.6;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.fillStyle = isOn ? '#fde68a' : '#f8fafc';
+            ctx.fill();
+            ctx.strokeStyle = isOn ? '#f59e0b' : '#1f2937';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.font = 'bold 18px "Segoe UI", sans-serif';
+            ctx.fillStyle = isOn ? '#b45309' : '#1f2937';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('P', cx, cy);
+            ctx.restore();
+          });
+          const { position, size } = component;
+          const cx = position.x + size.width / 2;
           const pilotLabel = getPairingDisplayLabel(component.id);
+          ctx.save();
+          ctx.font = '12px "Segoe UI", sans-serif';
+          ctx.fillStyle = '#1f2937';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText(component.label, cx, position.y - 8);
           if (pilotLabel) {
             ctx.font = 'bold 16px "Segoe UI", sans-serif';
             ctx.fillStyle = '#c2410c';
-            ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(pilotLabel, cx, y + height + 14);
+            ctx.fillText(pilotLabel, cx, position.y + size.height + 14);
           }
           ctx.restore();
         }
@@ -2557,10 +2655,9 @@
         function getConnectorPositionById(id) {
           if (componentConnectorIndex.has(id)) {
             const { component, connector } = componentConnectorIndex.get(id);
-            return {
-              x: component.position.x + connector.offset.x,
-              y: component.position.y + connector.offset.y
-            };
+            const center = getComponentCenter(component);
+            const offset = getConnectorOffsetForComponent(component, connector);
+            return { x: center.x + offset.x, y: center.y + offset.y };
           }
           if (state.junctionIndex.has(id)) {
             const junction = state.junctionIndex.get(id);
@@ -2586,6 +2683,52 @@
           let t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lenSq;
           t = Math.max(0, Math.min(1, t));
           return { x: start.x + t * dx, y: start.y + t * dy };
+        }
+
+        function getComponentCenter(component) {
+          return {
+            x: component.position.x + component.size.width / 2,
+            y: component.position.y + component.size.height / 2
+          };
+        }
+
+        function getConnectorOffsetForComponent(component, connector) {
+          const baseSize = component.baseSize || component.size;
+          const rotation = normalizeRotation(component.rotation || 0);
+          const halfWidth = baseSize.width / 2;
+          const halfHeight = baseSize.height / 2;
+          const dx = connector.offset.x - halfWidth;
+          const dy = connector.offset.y - halfHeight;
+          switch (rotation) {
+            case 0:
+              return { x: dx, y: dy };
+            case 90:
+              return { x: -dy, y: dx };
+            case 180:
+              return { x: -dx, y: -dy };
+            case 270:
+              return { x: dy, y: -dx };
+            default: {
+              const radians = (rotation * Math.PI) / 180;
+              return {
+                x: dx * Math.cos(radians) - dy * Math.sin(radians),
+                y: dx * Math.sin(radians) + dy * Math.cos(radians)
+              };
+            }
+          }
+        }
+
+        function getRotatedSize(baseSize, rotation) {
+          const normalized = normalizeRotation(rotation || 0);
+          if (normalized % 180 === 0) {
+            return { width: baseSize.width, height: baseSize.height };
+          }
+          return { width: baseSize.height, height: baseSize.width };
+        }
+
+        function normalizeRotation(value) {
+          const normalized = value % 360;
+          return normalized < 0 ? normalized + 360 : normalized;
         }
 
         function getCanvasPoint(evt) {
