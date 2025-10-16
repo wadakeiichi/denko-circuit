@@ -45,7 +45,19 @@
         gap: 8px;
         margin-top: 12px;
       }
-      .color-button, .tool-button {
+      .selector-label {
+        margin: 12px 0 0 0;
+        font-size: 12px;
+        font-weight: 600;
+        color: #475569;
+      }
+      .gauge-selector {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      .color-button, .gauge-button, .tool-button {
         border: 1px solid #d0d7de;
         background: #f8fafc;
         padding: 10px 12px;
@@ -55,12 +67,15 @@
         cursor: pointer;
         transition: all .15s ease;
       }
-      .color-button:hover, .tool-button:hover { border-color: #94a3b8; background: #f1f5f9; }
-      .color-button.active, .tool-button.active {
+      .color-button:hover, .gauge-button:hover, .tool-button:hover { border-color: #94a3b8; background: #f1f5f9; }
+      .color-button.active, .gauge-button.active, .tool-button.active {
         border-color: #2563eb;
         background: #dbeafe;
         color: #1d4ed8;
         box-shadow: 0 0 0 1px #2563eb inset;
+      }
+      .gauge-button {
+        text-align: center;
       }
       .color-button {
         display: flex;
@@ -113,14 +128,32 @@
         font-size: 14px;
         display: flex;
         justify-content: flex-start;
-        align-items: flex-start;
+        align-items: stretch;
         gap: 16px;
         flex-wrap: wrap;
-        min-height: 72px;
+        height: 128px;
       }
       .canvas-stage { flex: 1; position: relative; min-height: 640px; }
       canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
-      .status { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #475569; flex-wrap: wrap; }
+      .status {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        font-size: 13px;
+        color: #475569;
+        flex-wrap: wrap;
+        width: 100%;
+      }
+      .status > span,
+      .status > button {
+        flex: 0 0 auto;
+      }
+      #status-tip {
+        flex: 1 1 100%;
+        min-height: 24px;
+        display: block;
+        padding-top: 4px;
+      }
       .status span { display: flex; align-items: center; gap: 4px; }
       .check-button {
         border: 1px solid #d0d7de;
@@ -156,6 +189,23 @@
       .outlet-indicator { transition: color .2s ease; }
       .outlet-indicator.on { color: #15803d; }
       .outlet-indicator.partial { color: #b45309; }
+      .sleeve-selector {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .sleeve-buttons {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .sleeve-info {
+        font-size: 12px;
+        color: #475569;
+        margin: 4px 0 0 0;
+        padding-left: 12px;
+      }
       .pairing-list {
         display: flex;
         flex-direction: column;
@@ -190,8 +240,20 @@
   </p>
         </div>
         <div class="panel">
-          <h2>芯線色選択</h2>
+          <h2>芯線設定</h2>
+          <p class="selector-label">色</p>
           <div id="color-selector" class="color-selector"></div>
+          <p class="selector-label">太さ</p>
+          <div id="gauge-selector" class="gauge-selector"></div>
+          <p class="selector-label">スリーブ刻印</p>
+          <div class="sleeve-selector">
+            <div id="sleeve-buttons" class="sleeve-buttons"></div>
+            <ul class="sleeve-info">
+              <li>◯: 1.6mm × 2本</li>
+              <li>小: 1.6mm × 3〜4本 / 1.6mm ×1 + 2.0mm ×1 / 1.6mm ×2 + 2.0mm ×1</li>
+              <li>中: 上記以外の組み合わせ</li>
+            </ul>
+          </div>
         </div>
         <div class="panel">
           <h2>ツール</h2>
@@ -218,6 +280,7 @@
             <li>接続点挿入時は、接続点から先の区間が現在選択中の色で再作成されます</li>
             <li>接続点はドラッグして位置を調整できます</li>
             <li>機器の外枠をドラッグして配置を移動</li>
+            <li>刻印モード: ツールバー「刻印」を選択し、接続点をクリックでスリーブ刻印を設定</li>
             <li>Escキーで作図中の配線や器具選択をキャンセル</li>
           </ul>
         </div>
@@ -226,6 +289,8 @@
         <div class="canvas-header">
           <div class="status">
             <span>選択中の芯線色: <strong id="selected-color-label"></strong></span>
+            <span>芯線太さ: <strong id="selected-gauge-label"></strong></span>
+            <span>スリーブ: <strong id="selected-sleeve-label"></strong></span>
             <span>スイッチ:
               <button id="switch-toggle" type="button" class="switch-toggle">切 (OFF)</button>
             </span>
@@ -249,13 +314,23 @@
           { id: 'blue', label: '青', color: 'blue' },
           { id: 'red', label: '赤', color: 'red' }
         ];
+        const conductorGaugeOptions = [
+          { id: '1_6', label: '1.6mm', value: '1.6' },
+          { id: '2_0', label: '2.0mm', value: '2.0' }
+        ];
+        const sleeveOptions = [
+          { id: 'round', label: '◯スリーブ', mark: '◯' },
+          { id: 'small', label: '小スリーブ', mark: '小' },
+          { id: 'medium', label: '中スリーブ', mark: '中' }
+        ];
 
         const pairingKana = ['イ', 'ロ', 'ハ', 'ニ', 'ホ', 'ヘ', 'ト', 'チ', 'リ', 'ヌ', 'ル', 'ヲ', 'ワ', 'カ', 'ヨ', 'タ', 'レ', 'ソ', 'ツ', 'ネ', 'ナ', 'ラ', 'ム', 'ウ', 'ヰ', 'ノ', 'オ', 'ク', 'ヤ', 'マ', 'ケ', 'フ', 'コ', 'エ', 'テ', 'ア', 'サ', 'キ', 'ユ', 'メ', 'ミ', 'シ', 'ヱ', 'ヒ', 'モ', 'セ', 'ス'];
         const pairingOptions = pairingKana.slice(0, 10);
 
         const toolModes = [
           { id: 'draw', label: '配線' },
-          { id: 'erase', label: '消しゴム' }
+          { id: 'erase', label: '消しゴム' },
+          { id: 'mark', label: '刻印' }
         ];
 
         const componentTemplates = {
@@ -325,6 +400,8 @@
 
         const state = {
           selectedColor: conductorOptions[0].color,
+          selectedGauge: conductorGaugeOptions[0].value,
+          selectedSleeveType: sleeveOptions[0].id,
           toolMode: 'draw',
           components: [],
           wires: [],
@@ -360,9 +437,13 @@
 
         const canvas = document.getElementById('wiring-canvas');
         const ctx = canvas.getContext('2d');
-        const selectorContainer = document.getElementById('color-selector');
+        const colorSelectorContainer = document.getElementById('color-selector');
+        const gaugeSelectorContainer = document.getElementById('gauge-selector');
+        const sleeveButtonsContainer = document.getElementById('sleeve-buttons');
         const componentPaletteContainer = document.getElementById('component-palette');
         const selectedColorLabel = document.getElementById('selected-color-label');
+        const selectedGaugeLabel = document.getElementById('selected-gauge-label');
+        const selectedSleeveLabel = document.getElementById('selected-sleeve-label');
         const switchToggle = document.getElementById('switch-toggle');
         const lampStatusLabel = document.getElementById('lamp-status');
         const outletStatusLabel = document.getElementById('outlet-status');
@@ -374,6 +455,8 @@
 
         function init() {
           buildColorControls();
+          buildGaugeControls();
+          buildSleeveControls();
           buildComponentPalette();
           buildToolButtons();
           seedInitialComponents();
@@ -401,13 +484,16 @@
           }
           updateUndoUI();
           updateSwitchUI();
+          updateGaugeUI();
+          updateSleeveUI();
           updateLampStatusUI();
           window.requestAnimationFrame(resizeCanvas);
           updateStatusTip();
         }
 
         function buildColorControls() {
-          selectorContainer.innerHTML = '';
+          if (!colorSelectorContainer) return;
+          colorSelectorContainer.innerHTML = '';
           conductorOptions.forEach(option => {
             const button = document.createElement('button');
             button.type = 'button';
@@ -417,11 +503,61 @@
             button.addEventListener('click', () => {
               state.selectedColor = option.color;
               updateColorUI();
+              if (state.toolMode !== 'draw') {
+                setToolMode('draw');
+              }
+            });
+            colorSelectorContainer.appendChild(button);
           });
-          selectorContainer.appendChild(button);
-        });
-        updateColorUI();
-      }
+          updateColorUI();
+        }
+
+        function buildGaugeControls() {
+          if (!gaugeSelectorContainer) return;
+          gaugeSelectorContainer.innerHTML = '';
+          conductorGaugeOptions.forEach(option => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'gauge-button';
+            button.dataset.gauge = option.value;
+            button.textContent = option.label;
+            button.addEventListener('click', () => {
+              if (state.selectedGauge === option.value) return;
+              recordHistory();
+              state.selectedGauge = option.value;
+              updateGaugeUI();
+              if (state.toolMode !== 'draw') {
+                setToolMode('draw');
+              }
+              updateStatusTip('芯線太さを' + option.label + 'に設定しました');
+            });
+            gaugeSelectorContainer.appendChild(button);
+          });
+          updateGaugeUI();
+        }
+
+        function buildSleeveControls() {
+          if (!sleeveButtonsContainer) return;
+          sleeveButtonsContainer.innerHTML = '';
+          sleeveOptions.forEach(option => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'gauge-button';
+            button.dataset.sleeve = option.id;
+            button.textContent = option.mark + ' ' + option.label;
+            button.addEventListener('click', () => {
+              if (state.selectedSleeveType === option.id) return;
+              state.selectedSleeveType = option.id;
+              updateSleeveUI();
+              if (state.toolMode !== 'draw') {
+                setToolMode('draw');
+              }
+              updateStatusTip(option.label + 'を選択しました。刻印モードで接続点をクリックしてください');
+            });
+            sleeveButtonsContainer.appendChild(button);
+          });
+          updateSleeveUI();
+        }
 
         function buildComponentPalette() {
           if (!componentPaletteContainer) return;
@@ -519,9 +655,15 @@
           return 'ー';
         }
 
+        function getSleeveOptionById(id) {
+          return sleeveOptions.find(option => option.id === id) || sleeveOptions[0];
+        }
+
         function captureSnapshot() {
           return {
             selectedColor: state.selectedColor,
+            selectedGauge: state.selectedGauge,
+            selectedSleeveType: state.selectedSleeveType,
             toolMode: state.toolMode,
             components: state.components.map(component => ({
               id: component.id,
@@ -541,6 +683,7 @@
             wires: state.wires.map(wire => ({
               id: wire.id,
               color: wire.color,
+              gauge: wire.gauge || conductorGaugeOptions[0].value,
               points: wire.points.map(point => ({ x: point.x, y: point.y })),
               startConnectorId: wire.startConnectorId,
               endConnectorId: wire.endConnectorId
@@ -549,7 +692,8 @@
               id: junction.id,
               label: junction.label,
               x: junction.x,
-              y: junction.y
+              y: junction.y,
+              sleeveType: junction.sleeveType || sleeveOptions[0].id
             })),
             switchClosed: state.switchClosed,
             pendingComponentType: state.pendingComponentType,
@@ -562,6 +706,8 @@
         function restoreSnapshot(snapshot) {
           historySuspended = true;
           state.selectedColor = snapshot.selectedColor;
+          state.selectedGauge = snapshot.selectedGauge || conductorGaugeOptions[0].value;
+          state.selectedSleeveType = snapshot.selectedSleeveType || sleeveOptions[0].id;
           state.toolMode = snapshot.toolMode || 'draw';
           state.components = snapshot.components.map(component => ({
             id: component.id,
@@ -581,6 +727,7 @@
           state.wires = snapshot.wires.map(wire => ({
             id: wire.id,
             color: wire.color,
+            gauge: wire.gauge || conductorGaugeOptions[0].value,
             points: wire.points.map(point => ({ x: point.x, y: point.y })),
             startConnectorId: wire.startConnectorId,
             endConnectorId: wire.endConnectorId
@@ -589,7 +736,8 @@
             id: junction.id,
             label: junction.label,
             x: junction.x,
-            y: junction.y
+            y: junction.y,
+            sleeveType: junction.sleeveType || sleeveOptions[0].id
           }));
           state.junctionIndex = new Map();
           state.junctions.forEach(junction => {
@@ -615,6 +763,7 @@
           buildPairingControls();
           syncPairingLabels();
           updateColorUI();
+          updateGaugeUI();
           updateComponentPaletteUI();
           updateToolButtons();
           updateSwitchUI();
@@ -791,7 +940,7 @@
             cancelActiveWire();
           }
           state.hoverWireId = null;
-          if (state.toolMode === 'erase' && state.pendingComponentType) {
+          if ((state.toolMode === 'erase' || state.toolMode === 'mark') && state.pendingComponentType) {
             state.pendingComponentType = null;
             updateComponentPaletteUI();
           }
@@ -810,11 +959,45 @@
           selectedColorLabel.textContent = selectedOption.label;
         }
 
+        function updateGaugeUI() {
+          const selectedOption =
+            conductorGaugeOptions.find(option => option.value === state.selectedGauge) || conductorGaugeOptions[0];
+          state.selectedGauge = selectedOption.value;
+          if (gaugeSelectorContainer) {
+            gaugeSelectorContainer.querySelectorAll('.gauge-button').forEach(btn => {
+              btn.classList.toggle('active', btn.dataset.gauge === state.selectedGauge);
+            });
+          }
+          if (selectedGaugeLabel) {
+            selectedGaugeLabel.textContent = selectedOption.label;
+          }
+        }
+
+        function updateSleeveUI() {
+          const selectedOption =
+            sleeveOptions.find(option => option.id === state.selectedSleeveType) || sleeveOptions[0];
+          state.selectedSleeveType = selectedOption.id;
+          if (sleeveButtonsContainer) {
+            sleeveButtonsContainer.querySelectorAll('.gauge-button').forEach(btn => {
+              btn.classList.toggle('active', btn.dataset.sleeve === state.selectedSleeveType);
+            });
+          }
+          if (selectedSleeveLabel) {
+            selectedSleeveLabel.textContent = selectedOption.label;
+          }
+        }
+
         function updateToolButtons() {
           document.querySelectorAll('.tool-button').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.toolMode === state.toolMode);
           });
-          canvas.style.cursor = state.toolMode === 'erase' ? 'not-allowed' : 'crosshair';
+          if (state.toolMode === 'erase') {
+            canvas.style.cursor = 'not-allowed';
+          } else if (state.toolMode === 'mark') {
+            canvas.style.cursor = 'text';
+          } else {
+            canvas.style.cursor = 'crosshair';
+          }
           if (
             state.draggingComponent ||
             (state.draggingJunction && state.draggingJunction.isDragging)
@@ -921,6 +1104,19 @@
           const point = getCanvasPoint(evt);
           state.pointer = point;
 
+          if (state.toolMode === 'mark') {
+            const junction = findJunctionNear(point, 14);
+            if (junction) {
+              recordHistory();
+              junction.sleeveType = state.selectedSleeveType;
+              updateStatusTip('接続点"' + junction.label + '"に刻印を設定しました');
+              draw();
+            } else {
+              updateStatusTip('刻印したい接続点をクリックしてください');
+            }
+            return;
+          }
+
           if (state.pendingComponentType && state.toolMode !== 'erase') {
             if (placePendingComponent(point)) {
               return;
@@ -959,6 +1155,13 @@
         function onPointerMove(evt) {
           const point = getCanvasPoint(evt);
           state.pointer = point;
+
+          if (state.toolMode === 'mark') {
+            const junction = findJunctionNear(point, 14);
+            state.hoverConnectorId = junction ? junction.id : null;
+            draw();
+            return;
+          }
 
           if (state.draggingComponent) {
             updateComponentDrag(point);
@@ -1126,6 +1329,7 @@
           state.activeWire = {
             id: 'wire-' + state.counters.wire,
             color: state.selectedColor,
+            gauge: state.selectedGauge,
             points: [startPoint, { x: startPoint.x, y: startPoint.y }],
             startConnectorId: connectorTarget.id,
             endConnectorId: null
@@ -1292,6 +1496,9 @@
           }
           if (state.toolMode === 'erase') {
             statusTip.textContent = '消したい器具や配線をクリックしてください';
+          } else if (state.toolMode === 'mark') {
+            const sleeveOption = getSleeveOptionById(state.selectedSleeveType);
+            statusTip.textContent = (sleeveOption.mark || '') + '刻印: 接続点をクリックしてください';
           } else if (state.activeWire) {
             statusTip.textContent = '配線中: 終了コネクタをクリック (Escで取消)';
           } else if (state.draggingComponent) {
@@ -1376,11 +1583,13 @@
         function drawWire(wire, { preview = false, highlight = false } = {}) {
           if (wire.points.length < 2) return;
           const color = getConductorStroke(wire.color || 'black');
+          const gauge = wire.gauge || conductorGaugeOptions[0].value;
+          const baseWidth = gauge === '2.0' ? 6 : 4;
           ctx.save();
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
           ctx.strokeStyle = color;
-          ctx.lineWidth = highlight ? 5 : 4;
+          ctx.lineWidth = highlight ? baseWidth + 2 : baseWidth;
           if (preview) {
             ctx.globalAlpha = 0.7;
             ctx.setLineDash([6, 6]);
@@ -1653,6 +1862,13 @@
             ctx.arc(junction.x, junction.y, 7, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
+            const sleeveOption = getSleeveOptionById(junction.sleeveType);
+            if (sleeveOption && sleeveOption.mark) {
+              ctx.font = '12px "Segoe UI", sans-serif';
+              ctx.fillStyle = '#1f2937';
+              ctx.textAlign = 'center';
+              ctx.fillText(sleeveOption.mark, junction.x, junction.y - 10);
+            }
             ctx.font = '11px "Segoe UI", sans-serif';
             ctx.fillStyle = '#b45309';
             ctx.textAlign = 'center';
@@ -1663,11 +1879,13 @@
 
         function createJunction(point) {
           state.counters.junction += 1;
+          const sleeveType = state.selectedSleeveType;
           const junction = {
             id: 'junction-' + state.counters.junction,
             label: 'J' + state.counters.junction,
             x: point.x,
-            y: point.y
+            y: point.y,
+            sleeveType
           };
           state.junctions.push(junction);
           state.junctionIndex.set(junction.id, junction);
@@ -1946,17 +2164,21 @@
           const junctionPoint = { x: point.x, y: point.y };
 
           const originalEndConnectorId = wire.endConnectorId || null;
+          const currentGauge = wire.gauge || conductorGaugeOptions[0].value;
 
           wire.points = [...headPoints, { x: junctionPoint.x, y: junctionPoint.y }];
           wire.endConnectorId = junction.id;
+          wire.gauge = currentGauge;
           simplifyWirePoints(wire);
 
           if (originalEndConnectorId) {
             const tailColor = state.selectedColor !== wire.color ? state.selectedColor : wire.color;
+            const tailGauge = state.selectedGauge !== currentGauge ? state.selectedGauge : currentGauge;
             state.counters.wire += 1;
             const newWire = {
               id: 'wire-' + state.counters.wire,
               color: tailColor,
+              gauge: tailGauge,
               points: [{ x: junctionPoint.x, y: junctionPoint.y }, ...tailPoints.map(p => ({ x: p.x, y: p.y }))],
               startConnectorId: junction.id,
               endConnectorId: originalEndConnectorId
