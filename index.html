@@ -1098,6 +1098,7 @@
             const button = document.createElement('button');
             button.type = 'button';
             button.textContent = option.label;
+            button.style.color = getConductorStroke(option.color);
             button.addEventListener('click', () => {
               recordHistory();
               targetWire.color = option.color;
