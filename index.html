@@ -78,7 +78,11 @@
       .color-button[data-color="black"]::before { background: #111827; border-color: #0f172a; }
       .color-button[data-color="blue"]::before { background: #1d4ed8; border-color: #1e3a8a; }
       .color-button[data-color="red"]::before { background: #dc2626; border-color: #991b1b; }
-      .tool-buttons { display: flex; gap: 8px; }
+      .tool-buttons {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
       .component-palette {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -108,10 +112,11 @@
         border-bottom: 1px solid #d0d7de;
         font-size: 14px;
         display: flex;
-        justify-content: space-between;
-        align-items: center;
+        justify-content: flex-start;
+        align-items: flex-start;
         gap: 16px;
         flex-wrap: wrap;
+        min-height: 72px;
       }
       .canvas-stage { flex: 1; position: relative; min-height: 640px; }
       canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
@@ -148,6 +153,32 @@
         cursor: not-allowed;
       }
       .lamp-indicator.on { color: #d97706; }
+      .outlet-indicator { transition: color .2s ease; }
+      .outlet-indicator.on { color: #15803d; }
+      .outlet-indicator.partial { color: #b45309; }
+      .pairing-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .pairing-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 13px;
+      }
+      .pairing-item label {
+        flex: 1;
+      }
+      .pairing-select {
+        min-width: 88px;
+        padding: 4px 6px;
+        border: 1px solid #cbd5e1;
+        border-radius: 4px;
+        font-size: 13px;
+        background: #ffffff;
+      }
     </style>
   </head>
   <body>
@@ -163,8 +194,16 @@
           <div id="color-selector" class="color-selector"></div>
         </div>
         <div class="panel">
+          <h2>ツール</h2>
+          <div id="tool-buttons" class="tool-buttons"></div>
+        </div>
+        <div class="panel">
           <h2>器具パレット</h2>
           <div id="component-palette" class="component-palette"></div>
+        </div>
+        <div class="panel">
+          <h2>対応マーク</h2>
+          <div id="pairing-assignments" class="pairing-list"></div>
         </div>
         <div class="panel">
           <h2>操作方法</h2>
@@ -185,13 +224,14 @@
       </aside>
       <main class="main">
         <div class="canvas-header">
-          <div class="tool-buttons" id="tool-buttons"></div>
           <div class="status">
             <span>選択中の芯線色: <strong id="selected-color-label"></strong></span>
             <span>スイッチ:
               <button id="switch-toggle" type="button" class="switch-toggle">切 (OFF)</button>
             </span>
             <span>ランプ: <strong id="lamp-status" class="lamp-indicator">消灯</strong></span>
+            <span>コンセント: <strong id="outlet-status" class="outlet-indicator">未配置</strong></span>
+            <button id="undo-button" type="button" class="check-button" disabled>戻る</button>
             <button id="check-wiring" type="button" class="check-button">配線チェック</button>
             <span id="status-tip"></span>
           </div>
@@ -211,6 +251,7 @@
         ];
 
         const pairingKana = ['イ', 'ロ', 'ハ', 'ニ', 'ホ', 'ヘ', 'ト', 'チ', 'リ', 'ヌ', 'ル', 'ヲ', 'ワ', 'カ', 'ヨ', 'タ', 'レ', 'ソ', 'ツ', 'ネ', 'ナ', 'ラ', 'ム', 'ウ', 'ヰ', 'ノ', 'オ', 'ク', 'ヤ', 'マ', 'ケ', 'フ', 'コ', 'エ', 'テ', 'ア', 'サ', 'キ', 'ユ', 'メ', 'ミ', 'シ', 'ヱ', 'ヒ', 'モ', 'セ', 'ス'];
+        const pairingOptions = pairingKana.slice(0, 10);
 
         const toolModes = [
           { id: 'draw', label: '配線' },
@@ -298,15 +339,21 @@
           switchClosed: false,
           lampOn: false,
           pilotOn: false,
+          outletStatuses: new Map(),
           pendingComponentType: null,
           primaryIds: { power: null, switch: null, lamp: null },
           pairingLabels: new Map(),
+          pairingAssignments: new Map(),
           counters: {
             wire: 0,
             junction: 0,
             component: { power: 0, switch: 0, outlet: 0, lamp: 0, pilot: 0 }
           }
         };
+
+        const history = [];
+        const historyLimit = 50;
+        let historySuspended = false;
 
         let componentConnectorIndex = new Map();
         state.junctionIndex = new Map();
@@ -318,6 +365,9 @@
         const selectedColorLabel = document.getElementById('selected-color-label');
         const switchToggle = document.getElementById('switch-toggle');
         const lampStatusLabel = document.getElementById('lamp-status');
+        const outletStatusLabel = document.getElementById('outlet-status');
+        const undoButton = document.getElementById('undo-button');
+        const pairingAssignmentsContainer = document.getElementById('pairing-assignments');
         const checkWiringButton = document.getElementById('check-wiring');
         const statusTip = document.getElementById('status-tip');
         const toolButtonsContainer = document.getElementById('tool-buttons');
@@ -327,6 +377,8 @@
           buildComponentPalette();
           buildToolButtons();
           seedInitialComponents();
+          buildPairingControls();
+          syncPairingLabels();
           rebuildConnectorIndex();
           bindEvents();
           if (switchToggle) {
@@ -344,6 +396,10 @@
               }
             });
           }
+          if (undoButton) {
+            undoButton.addEventListener('click', undoLastAction);
+          }
+          updateUndoUI();
           updateSwitchUI();
           updateLampStatusUI();
           window.requestAnimationFrame(resizeCanvas);
@@ -382,6 +438,212 @@
           updateComponentPaletteUI();
         }
 
+        function buildPairingControls() {
+          if (!pairingAssignmentsContainer) return;
+          pairingAssignmentsContainer.innerHTML = '';
+          const targets = state.components.filter(isPairingComponent);
+          if (!targets.length) {
+            const message = document.createElement('div');
+            message.textContent = '対象器具がありません';
+            message.style.fontSize = '13px';
+            message.style.color = '#64748b';
+            pairingAssignmentsContainer.appendChild(message);
+            return;
+          }
+          targets.forEach(component => {
+            if (!state.pairingAssignments.has(component.id)) {
+              state.pairingAssignments.set(component.id, null);
+            }
+            const item = document.createElement('div');
+            item.className = 'pairing-item';
+            const label = document.createElement('label');
+            label.textContent = componentLabel(component);
+            label.setAttribute('for', component.id + '-pairing-select');
+            const select = document.createElement('select');
+            select.id = component.id + '-pairing-select';
+            select.className = 'pairing-select';
+            const emptyOption = document.createElement('option');
+            emptyOption.value = '';
+            emptyOption.textContent = '未設定';
+            select.appendChild(emptyOption);
+            pairingOptions.forEach(optionLabel => {
+              const option = document.createElement('option');
+              option.value = optionLabel;
+              option.textContent = optionLabel;
+              select.appendChild(option);
+            });
+            const current = state.pairingAssignments.get(component.id);
+            select.value = current || '';
+            select.addEventListener('change', () => {
+              const value = select.value || null;
+              handlePairingSelection(component.id, value);
+            });
+            item.appendChild(label);
+            item.appendChild(select);
+            pairingAssignmentsContainer.appendChild(item);
+          });
+        }
+
+        function componentLabel(component) {
+          const template = componentTemplates[component.type];
+          const base = template ? template.displayName : component.label;
+          return base + ' (' + component.id + ')';
+        }
+
+        function isPairingComponent(component) {
+          return component.type === 'switch' || component.type === 'lamp' || component.type === 'pilot';
+        }
+
+        function handlePairingSelection(componentId, label) {
+          recordHistory();
+          state.pairingAssignments.set(componentId, label);
+          syncPairingLabels();
+          draw();
+        }
+
+        function syncPairingLabels() {
+          state.pairingLabels = new Map();
+          state.pairingAssignments.forEach((label, componentId) => {
+            if (label) {
+              state.pairingLabels.set(componentId, label);
+            }
+          });
+        }
+
+        function getPairingDisplayLabel(componentId) {
+          if (!state.pairingAssignments.has(componentId)) return null;
+          const label = state.pairingAssignments.get(componentId);
+          if (label) return label;
+          const auto = state.pairingLabels.get(componentId);
+          if (auto) return auto;
+          return 'ー';
+        }
+
+        function captureSnapshot() {
+          return {
+            selectedColor: state.selectedColor,
+            toolMode: state.toolMode,
+            components: state.components.map(component => ({
+              id: component.id,
+              type: component.type,
+              label: component.label,
+              position: { x: component.position.x, y: component.position.y },
+              size: { width: component.size.width, height: component.size.height },
+              connectors: component.connectors.map(connector => ({
+                id: connector.id,
+                key: connector.key,
+                label: connector.label,
+                color: connector.color,
+                role: connector.role,
+                offset: { x: connector.offset.x, y: connector.offset.y }
+              }))
+            })),
+            wires: state.wires.map(wire => ({
+              id: wire.id,
+              color: wire.color,
+              points: wire.points.map(point => ({ x: point.x, y: point.y })),
+              startConnectorId: wire.startConnectorId,
+              endConnectorId: wire.endConnectorId
+            })),
+            junctions: state.junctions.map(junction => ({
+              id: junction.id,
+              label: junction.label,
+              x: junction.x,
+              y: junction.y
+            })),
+            switchClosed: state.switchClosed,
+            pendingComponentType: state.pendingComponentType,
+            primaryIds: { ...state.primaryIds },
+            pairingAssignments: Array.from(state.pairingAssignments.entries()),
+            counters: JSON.parse(JSON.stringify(state.counters))
+          };
+        }
+
+        function restoreSnapshot(snapshot) {
+          historySuspended = true;
+          state.selectedColor = snapshot.selectedColor;
+          state.toolMode = snapshot.toolMode || 'draw';
+          state.components = snapshot.components.map(component => ({
+            id: component.id,
+            type: component.type,
+            label: component.label,
+            position: { x: component.position.x, y: component.position.y },
+            size: { width: component.size.width, height: component.size.height },
+            connectors: component.connectors.map(connector => ({
+              id: connector.id,
+              key: connector.key,
+              label: connector.label,
+              color: connector.color,
+              role: connector.role,
+              offset: { x: connector.offset.x, y: connector.offset.y }
+            }))
+          }));
+          state.wires = snapshot.wires.map(wire => ({
+            id: wire.id,
+            color: wire.color,
+            points: wire.points.map(point => ({ x: point.x, y: point.y })),
+            startConnectorId: wire.startConnectorId,
+            endConnectorId: wire.endConnectorId
+          }));
+          state.junctions = snapshot.junctions.map(junction => ({
+            id: junction.id,
+            label: junction.label,
+            x: junction.x,
+            y: junction.y
+          }));
+          state.junctionIndex = new Map();
+          state.junctions.forEach(junction => {
+            state.junctionIndex.set(junction.id, junction);
+          });
+          state.switchClosed = Boolean(snapshot.switchClosed);
+          state.pendingComponentType = snapshot.pendingComponentType || null;
+          state.primaryIds = { ...snapshot.primaryIds };
+          state.pairingAssignments = new Map(snapshot.pairingAssignments || []);
+          state.pairingLabels = new Map();
+          state.counters = JSON.parse(JSON.stringify(snapshot.counters));
+          state.activeWire = null;
+          state.hoverConnectorId = null;
+          state.hoverWireId = null;
+          state.pointer = null;
+          state.draggingComponent = null;
+          state.draggingJunction = null;
+          state.outletStatuses = new Map();
+          state.lampOn = false;
+          state.pilotOn = false;
+          historySuspended = false;
+          rebuildConnectorIndex();
+          buildPairingControls();
+          syncPairingLabels();
+          updateColorUI();
+          updateComponentPaletteUI();
+          updateToolButtons();
+          updateSwitchUI();
+          updateStatusTip();
+          draw();
+        }
+
+        function recordHistory() {
+          if (historySuspended) return;
+          history.push(captureSnapshot());
+          if (history.length > historyLimit) {
+            history.shift();
+          }
+          updateUndoUI();
+        }
+
+        function undoLastAction() {
+          if (!history.length) return;
+          const snapshot = history.pop();
+          restoreSnapshot(snapshot);
+          updateUndoUI();
+          updateStatusTip('直前の操作を取り消しました');
+        }
+
+        function updateUndoUI() {
+          if (!undoButton) return;
+          undoButton.disabled = history.length === 0;
+        }
+
         function setPendingComponentType(type) {
           if (state.pendingComponentType === type) {
             state.pendingComponentType = null;
@@ -408,15 +670,23 @@
 
         function seedInitialComponents() {
           if (state.components.length) return;
+          historySuspended = true;
           initialComponentLayout.forEach(entry => {
             addComponentInstance(entry.type, entry.position || null);
           });
+          historySuspended = false;
         }
 
         function addComponentInstance(type, position = null) {
           const component = createComponentInstance(type, position);
           if (!component) return null;
+          recordHistory();
           state.components.push(component);
+          if (isPairingComponent(component)) {
+            state.pairingAssignments.set(component.id, null);
+          }
+          buildPairingControls();
+          syncPairingLabels();
           if (Object.prototype.hasOwnProperty.call(state.primaryIds, component.type) &&
             !state.primaryIds[component.type]) {
             state.primaryIds[component.type] = component.id;
@@ -561,6 +831,7 @@
             updateSwitchUI();
             return;
           }
+          recordHistory();
           state.switchClosed = !state.switchClosed;
           updateSwitchUI();
           updateStatusTip(state.switchClosed ? 'スイッチを入れました' : 'スイッチを切りました');
@@ -588,6 +859,37 @@
           if (!lampStatusLabel) return;
           lampStatusLabel.textContent = state.lampOn ? '点灯' : '消灯';
           lampStatusLabel.classList.toggle('on', state.lampOn);
+        }
+
+        function updateOutletStatusUI() {
+          if (!outletStatusLabel) return;
+          const statuses = state.outletStatuses;
+          if (!statuses || statuses.size === 0) {
+            outletStatusLabel.textContent = '未配置';
+            outletStatusLabel.classList.remove('on');
+            outletStatusLabel.classList.remove('partial');
+            return;
+          }
+          const values = Array.from(statuses.values());
+          const energizedCount = values.filter(status => status.energized).length;
+          const partialCount = values.filter(status =>
+            !status.energized && (status.hotConnected || status.neutralConnected)
+          ).length;
+          let labelText = '';
+          if (energizedCount === statuses.size && statuses.size > 0) {
+            labelText = '全口通電';
+          } else if (energizedCount > 0) {
+            labelText = energizedCount + '/' + statuses.size + '口通電';
+          } else if (partialCount > 0) {
+            labelText = '片側のみ接続';
+          } else {
+            labelText = '未接続';
+          }
+          outletStatusLabel.textContent = labelText;
+          const allFunctional = energizedCount > 0 && energizedCount === statuses.size;
+          const hasPartial = !allFunctional && (energizedCount > 0 || partialCount > 0);
+          outletStatusLabel.classList.toggle('on', allFunctional);
+          outletStatusLabel.classList.toggle('partial', hasPartial);
         }
 
         function bindEvents() {
@@ -723,6 +1025,7 @@
                 finalizeActiveWire(connectorTarget);
               }
             } else {
+              recordHistory();
               const junction = createJunction(point);
               finalizeActiveWire({ id: junction.id, position: { x: junction.x, y: junction.y } });
             }
@@ -746,6 +1049,7 @@
             return;
           }
 
+          recordHistory();
           const newJunction = createJunction(point);
           state.hoverConnectorId = newJunction.id;
           draw();
@@ -754,6 +1058,7 @@
         function tryStartComponentDrag(point) {
           const target = findComponentAt(point);
           if (!target) return false;
+          recordHistory();
           const offset = { x: point.x - target.position.x, y: point.y - target.position.y };
           state.draggingComponent = { component: target, offset };
           canvas.style.cursor = 'grabbing';
@@ -777,6 +1082,7 @@
           if (state.draggingJunction) return true;
           const junction = findJunctionNear(point, 10);
           if (!junction) return false;
+          recordHistory();
           state.draggingJunction = {
             junction,
             offset: { x: point.x - junction.x, y: point.y - junction.y },
@@ -855,6 +1161,7 @@
             return;
           }
           wire.endConnectorId = connectorTarget.id;
+          recordHistory();
           state.wires.push(wire);
           state.activeWire = null;
           const { errors, warnings } = validateConductorAssignments();
@@ -883,7 +1190,7 @@
             return;
           }
 
-          const junction = findJunctionNear(point, 12);
+          const junction = findJunctionNear(point, 20);
           if (junction) {
             removeJunction(junction);
             state.hoverConnectorId = null;
@@ -893,6 +1200,7 @@
           }
           const hit = findWireSegment(point);
           if (hit && hit.distance <= 12) {
+            recordHistory();
             state.wires = state.wires.filter(w => w.id !== hit.wire.id);
             state.hoverWireId = null;
             updateStatusTip('配線を削除しました');
@@ -903,6 +1211,7 @@
         }
 
         function removeComponent(component) {
+          recordHistory();
           const connectorIds = new Set(component.connectors.map(connector => connector.id));
           state.components = state.components.filter(item => item.id !== component.id);
 
@@ -920,6 +1229,12 @@
           }
 
           cleanupJunctions();
+
+          if (state.pairingAssignments.has(component.id)) {
+            state.pairingAssignments.delete(component.id);
+            syncPairingLabels();
+          }
+          buildPairingControls();
 
           if (Object.prototype.hasOwnProperty.call(state.primaryIds, component.type) &&
             state.primaryIds[component.type] === component.id) {
@@ -1013,6 +1328,7 @@
         function draw() {
           evaluateCircuit();
           updateLampStatusUI();
+          updateOutletStatusUI();
           const ratio = window.devicePixelRatio || 1;
           ctx.save();
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1170,7 +1486,7 @@
           ctx.fillText(component.label, x + width / 2, y - 10);
           ctx.font = '12px "Segoe UI", sans-serif';
           ctx.fillText(isOn ? '入' : '切', x + width / 2, y + height - 12);
-          const switchLabel = state.pairingLabels.get(component.id);
+          const switchLabel = getPairingDisplayLabel(component.id);
           if (switchLabel) {
             ctx.font = 'bold 18px "Segoe UI", sans-serif';
             ctx.fillStyle = '#c2410c';
@@ -1184,6 +1500,12 @@
           const { x, y } = component.position;
           const { width, height } = component.size;
           ctx.save();
+          const status = state.outletStatuses.get(component.id);
+          const isEnergized = status ? status.energized : false;
+          const isPartial = status ? !status.energized && (status.hotConnected || status.neutralConnected) : false;
+          const ringColor = isEnergized ? '#15803d' : isPartial ? '#b45309' : '#1f2937';
+          const fillColor = isEnergized ? '#ecfdf5' : '#ffffff';
+          const labelColor = isEnergized ? '#166534' : isPartial ? '#b45309' : '#1f2937';
           ctx.strokeStyle = '#1f2937';
           ctx.lineWidth = 1.5;
           ctx.strokeRect(x, y, width, height);
@@ -1192,6 +1514,10 @@
           const radius = Math.min(width, height) / 2.6;
           ctx.beginPath();
           ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.fillStyle = fillColor;
+          ctx.fill();
+          ctx.strokeStyle = ringColor;
+          ctx.lineWidth = 2;
           ctx.stroke();
           const slotOffset = radius * 0.55;
           const slotHeight = radius * 0.9;
@@ -1200,11 +1526,18 @@
           ctx.lineTo(cx - slotOffset, cy + slotHeight / 2);
           ctx.moveTo(cx + slotOffset, cy - slotHeight / 2);
           ctx.lineTo(cx + slotOffset, cy + slotHeight / 2);
+          ctx.strokeStyle = ringColor;
+          ctx.lineWidth = 2;
           ctx.stroke();
           ctx.font = '14px "Segoe UI", sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillStyle = '#1f2937';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillStyle = labelColor;
           ctx.fillText(component.label, cx, y - 12);
+          if (status) {
+            ctx.font = '12px "Segoe UI", sans-serif';
+            ctx.fillText(isEnergized ? '使用可' : isPartial ? '要確認' : '未接続', cx, y + height - 12);
+          }
           ctx.restore();
         }
 
@@ -1231,7 +1564,7 @@
           ctx.font = '14px "Segoe UI", sans-serif';
           ctx.textBaseline = 'alphabetic';
           ctx.fillText(component.label, cx, y - 12);
-          const lampLabel = state.pairingLabels.get(component.id);
+          const lampLabel = getPairingDisplayLabel(component.id);
           if (lampLabel) {
             ctx.font = 'bold 18px "Segoe UI", sans-serif';
             ctx.fillStyle = '#c2410c';
@@ -1265,7 +1598,7 @@
           ctx.font = '12px "Segoe UI", sans-serif';
           ctx.textBaseline = 'alphabetic';
           ctx.fillText(component.label, cx, y - 8);
-          const pilotLabel = state.pairingLabels.get(component.id);
+          const pilotLabel = getPairingDisplayLabel(component.id);
           if (pilotLabel) {
             ctx.font = 'bold 16px "Segoe UI", sans-serif';
             ctx.fillStyle = '#c2410c';
@@ -1348,6 +1681,7 @@
         }
 
         function removeJunction(junction) {
+          recordHistory();
           state.junctions = state.junctions.filter(j => j.id !== junction.id);
           state.junctionIndex.delete(junction.id);
           state.wires = state.wires.filter(wire => wire.startConnectorId !== junction.id && wire.endConnectorId !== junction.id);
@@ -1398,7 +1732,21 @@
             const neutralId = pilotNeutralIds[index];
             return hasPath(powerHotId, hotId) && hasPath(neutralId, powerNeutralId);
           });
+          const outletStatuses = new Map();
+          state.components.forEach(component => {
+            if (component.type !== 'outlet') return;
+            const hotId = getConnectorId(component.id, 'hot');
+            const neutralId = getConnectorId(component.id, 'neutral');
+            const hotPath = hasPath(powerHotId, hotId);
+            const neutralPath = hasPath(neutralId, powerNeutralId);
+            outletStatuses.set(component.id, {
+              hotConnected: hotPath,
+              neutralConnected: neutralPath,
+              energized: Boolean(hotPath && neutralPath)
+            });
+          });
 
+          state.outletStatuses = outletStatuses;
           state.lampOn = lampOn;
           state.pilotOn = pilotOn;
           updateSwitchPairings(adjacency);
@@ -1424,23 +1772,33 @@
 
         function updateSwitchPairings(adjacency) {
           state.pairingLabels = new Map();
+          state.pairingAssignments.forEach((label, componentId) => {
+            if (label) {
+              state.pairingLabels.set(componentId, label);
+            }
+          });
           if (!adjacency) return;
           const usedLoads = new Set();
           const pairs = [];
           state.components.forEach(component => {
             if (component.type !== 'switch') return;
+            if (state.pairingLabels.has(component.id)) return;
             const outConnector = component.connectors.find(connector => connector.key === 'out');
             if (!outConnector) return;
             const loadConnectorId = findLoadForSwitch(outConnector.id, adjacency, usedLoads);
             if (!loadConnectorId) return;
             const loadEntry = componentConnectorIndex.get(loadConnectorId);
             if (!loadEntry) return;
+            if (state.pairingLabels.has(loadEntry.component.id)) return;
             usedLoads.add(loadEntry.component.id);
             pairs.push({ switchId: component.id, loadId: loadEntry.component.id });
           });
 
-          pairs.forEach((pair, index) => {
-            const label = pairingKana[index % pairingKana.length];
+          const usedLabels = new Set(state.pairingLabels.values());
+          const availableLabels = pairingOptions.filter(label => !usedLabels.has(label));
+          pairs.forEach(pair => {
+            if (!availableLabels.length) return;
+            const label = availableLabels.shift();
             state.pairingLabels.set(pair.switchId, label);
             state.pairingLabels.set(pair.loadId, label);
           });
@@ -1509,6 +1867,9 @@
           conductorMap.forEach((connections, componentId) => {
             const component = getComponentById(componentId);
             if (!component) return;
+            if (component.type === 'switch' || component.type === 'pilot') {
+              return;
+            }
             const involvedColors = new Set();
             connections.forEach(connectionMap => {
               connectionMap.forEach(colorSet => {
@@ -1518,28 +1879,17 @@
             const connectorCount = connections.size;
             const colorSet = new Set(involvedColors);
             let isValid = false;
-            if (component.type === 'switch') {
-              if (connectorCount < 2) return;
-              const combos = [
-                ['black', 'blue'],
-                ['black', 'red']
-              ];
-              isValid = combos.some(combo =>
-                combo.length === colorSet.size && combo.every(color => colorSet.has(color))
-              );
-            } else {
-              const requiredColors = component.connectors
-                .map(connector => connector.color)
-                .filter(color => color);
-              const uniqueRequiredColors = Array.from(new Set(requiredColors));
-              if (connectorCount < uniqueRequiredColors.length) {
-                return;
-              }
-              const sortedInvolved = Array.from(colorSet).sort();
-              const sortedRequired = uniqueRequiredColors.slice().sort();
-              if (sortedInvolved.length === sortedRequired.length) {
-                isValid = sortedInvolved.every((color, index) => color === sortedRequired[index]);
-              }
+            const requiredColors = component.connectors
+              .map(connector => connector.color)
+              .filter(color => color);
+            const uniqueRequiredColors = Array.from(new Set(requiredColors));
+            if (connectorCount < uniqueRequiredColors.length) {
+              return;
+            }
+            const sortedInvolved = Array.from(colorSet).sort();
+            const sortedRequired = uniqueRequiredColors.slice().sort();
+            if (sortedInvolved.length === sortedRequired.length) {
+              isValid = sortedInvolved.every((color, index) => color === sortedRequired[index]);
             }
             if (isValid) {
               return;
@@ -1587,6 +1937,7 @@
         }
 
         function insertJunction(wire, segmentIndex, point) {
+          recordHistory();
           const junction = createJunction(point);
 
           const originalPoints = wire.points.map(p => ({ x: p.x, y: p.y }));
