@@ -154,7 +154,7 @@
         display: block;
         padding-top: 4px;
       }
-      .sleeve-menu {
+      .sleeve-menu, .wire-menu {
         position: absolute;
         background: #ffffff;
         border: 1px solid #cbd5e1;
@@ -166,7 +166,8 @@
         min-width: 160px;
       }
       .sleeve-menu.open { display: block; }
-      .sleeve-menu button {
+      .wire-menu.open { display: block; }
+      .sleeve-menu button, .wire-menu button {
         width: 100%;
         border: none;
         background: transparent;
@@ -176,7 +177,8 @@
         border-radius: 4px;
         cursor: pointer;
       }
-      .sleeve-menu button:hover {
+      .sleeve-menu button:hover,
+      .wire-menu button:hover {
         background: #e2e8f0;
       }
       .status span { display: flex; align-items: center; gap: 4px; }
@@ -297,7 +299,7 @@
             <li>接続点はドラッグして位置を調整できます</li>
             <li>機器の外枠をドラッグして配置を移動</li>
             <li>刻印モード: ツールバー「刻印」を選択し、接続点をクリックでスリーブ刻印を設定</li>
-            <li>Ctrl + クリックで接続点のスリーブ刻印をメニューから選択可能</li>
+            <li>Ctrl + クリックで接続点のスリーブ刻印や配線の色/太さをメニューから変更可能</li>
             <li>Escキーで作図中の配線や器具選択をキャンセル</li>
           </ul>
         </div>
@@ -324,6 +326,7 @@
       </main>
     </div>
     <div id="sleeve-menu" class="sleeve-menu" role="menu" aria-hidden="true"></div>
+    <div id="wire-menu" class="wire-menu" role="menu" aria-hidden="true"></div>
 
     <script>
       (() => {
@@ -340,6 +343,14 @@
           { id: 'round', label: '◯スリーブ', mark: '◯' },
           { id: 'small', label: '小スリーブ', mark: '小' },
           { id: 'medium', label: '中スリーブ', mark: '中' }
+        ];
+        const wireColorGaugeOptions = [
+          { id: 'black_1_6', label: '黒 1.6mm', color: 'black', gauge: '1.6' },
+          { id: 'black_2_0', label: '黒 2.0mm', color: 'black', gauge: '2.0' },
+          { id: 'blue_1_6', label: '青 1.6mm', color: 'blue', gauge: '1.6' },
+          { id: 'blue_2_0', label: '青 2.0mm', color: 'blue', gauge: '2.0' },
+          { id: 'red_1_6', label: '赤 1.6mm', color: 'red', gauge: '1.6' },
+          { id: 'red_2_0', label: '赤 2.0mm', color: 'red', gauge: '2.0' }
         ];
 
         const pairingKana = ['イ', 'ロ', 'ハ', 'ニ', 'ホ', 'ヘ', 'ト', 'チ', 'リ', 'ヌ', 'ル', 'ヲ', 'ワ', 'カ', 'ヨ', 'タ', 'レ', 'ソ', 'ツ', 'ネ', 'ナ', 'ラ', 'ム', 'ウ', 'ヰ', 'ノ', 'オ', 'ク', 'ヤ', 'マ', 'ケ', 'フ', 'コ', 'エ', 'テ', 'ア', 'サ', 'キ', 'ユ', 'メ', 'ミ', 'シ', 'ヱ', 'ヒ', 'モ', 'セ', 'ス'];
@@ -444,7 +455,9 @@
             junction: 0,
             component: { power: 0, switch: 0, outlet: 0, lamp: 0, pilot: 0 }
           },
-          sleeveMenu: { isOpen: false, junctionId: null }
+          sleeveMenu: { isOpen: false, junctionId: null },
+          wireMenu: { isOpen: false, wireId: null },
+          showSleeveMarks: false
         };
 
         const history = [];
@@ -472,6 +485,7 @@
         const statusTip = document.getElementById('status-tip');
         const toolButtonsContainer = document.getElementById('tool-buttons');
         const sleeveMenu = document.getElementById('sleeve-menu');
+        const wireMenu = document.getElementById('wire-menu');
 
         function init() {
           buildColorControls();
@@ -522,9 +536,16 @@
             if (evt.ctrlKey) return;
             closeSleeveMenu();
           });
+          window.addEventListener('click', evt => {
+            if (!state.wireMenu.isOpen) return;
+            if (wireMenu && wireMenu.contains(evt.target)) return;
+            if (evt.ctrlKey) return;
+            closeWireMenu();
+          });
           window.addEventListener('keydown', evt => {
             if (evt.key === 'Escape') {
               closeSleeveMenu();
+              closeWireMenu();
             }
           });
           updateUndoUI();
@@ -803,6 +824,9 @@
           state.outletStatuses = new Map();
           state.lampOn = false;
           state.pilotOn = false;
+          state.showSleeveMarks = false;
+          closeSleeveMenu();
+          closeWireMenu();
           historySuspended = false;
           rebuildConnectorIndex();
           buildPairingControls();
@@ -1050,7 +1074,7 @@
             });
             sleeveMenu.appendChild(button);
           });
-          const { x, y } = calculateMenuPosition(clientX, clientY);
+          const { x, y } = calculateGenericMenuPosition(sleeveMenu, clientX, clientY);
           sleeveMenu.style.left = x + 'px';
           sleeveMenu.style.top = y + 'px';
           sleeveMenu.classList.add('open');
@@ -1067,18 +1091,53 @@
           }
         }
 
-        function calculateMenuPosition(clientX, clientY) {
-          const menuRect = { width: sleeveMenu ? sleeveMenu.offsetWidth : 160, height: sleeveMenu ? sleeveMenu.offsetHeight : 120 };
+        function openWireMenu(targetWire, clientX, clientY) {
+          if (!wireMenu) return;
+          wireMenu.innerHTML = '';
+          wireColorGaugeOptions.forEach(option => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = option.label;
+            button.addEventListener('click', () => {
+              recordHistory();
+              targetWire.color = option.color;
+              targetWire.gauge = option.gauge;
+              closeWireMenu();
+              updateStatusTip('配線を ' + option.label + ' に変更しました');
+              draw();
+            });
+            wireMenu.appendChild(button);
+          });
+          const { x, y } = calculateGenericMenuPosition(wireMenu, clientX, clientY);
+          wireMenu.style.left = x + 'px';
+          wireMenu.style.top = y + 'px';
+          wireMenu.classList.add('open');
+          wireMenu.setAttribute('aria-hidden', 'false');
+          state.wireMenu = { isOpen: true, wireId: targetWire.id };
+        }
+
+        function closeWireMenu() {
+          if (!state.wireMenu.isOpen) return;
+          state.wireMenu = { isOpen: false, wireId: null };
+          if (wireMenu) {
+            wireMenu.classList.remove('open');
+            wireMenu.setAttribute('aria-hidden', 'true');
+          }
+        }
+
+        function calculateGenericMenuPosition(menuElement, clientX, clientY) {
+          const defaultRect = { width: 160, height: 120 };
+          const rect = menuElement ? { width: menuElement.offsetWidth || defaultRect.width, height: menuElement.offsetHeight || defaultRect.height } : defaultRect;
           const margin = 8;
           let x = clientX + margin;
           let y = clientY + margin;
           const viewportWidth = window.innerWidth;
           const viewportHeight = window.innerHeight;
-          if (x + menuRect.width > viewportWidth) {
-            x = clientX - menuRect.width - margin;
+          if (x + rect.width > viewportWidth) {
+            x = clientX - rect.width - margin;
           }
-          if (y + menuRect.height > viewportHeight) {
-            y = clientY - menuRect.height - margin;
+          if (y + rect.height > viewportHeight) {
+            y = clientY - rect.height - margin;
           }
           return { x: Math.max(margin, x), y: Math.max(margin, y) };
         }
@@ -1201,6 +1260,7 @@
           state.pointer = point;
           if (!evt.ctrlKey) {
             closeSleeveMenu();
+            closeWireMenu();
           }
 
           if (evt.ctrlKey) {
@@ -1210,11 +1270,20 @@
             const junction = findJunctionNear(point, 18);
             if (junction) {
               closeSleeveMenu();
+              closeWireMenu();
               openSleeveMenu(junction, evt.clientX, evt.clientY);
               return;
             }
-            updateStatusTip('近くに接続点がありません');
+            const hit = findWireSegment(point);
+            if (hit && hit.distance <= 14) {
+              closeSleeveMenu();
+              closeWireMenu();
+              openWireMenu(hit.wire, evt.clientX, evt.clientY);
+              return;
+            }
+            updateStatusTip('近くに接続点や配線がありません');
             closeSleeveMenu();
+            closeWireMenu();
             return;
           }
 
@@ -1521,6 +1590,9 @@
             recordHistory();
             state.wires = state.wires.filter(w => w.id !== hit.wire.id);
             state.hoverWireId = null;
+            if (state.wireMenu.isOpen && state.wireMenu.wireId === hit.wire.id) {
+              closeWireMenu();
+            }
             updateStatusTip('配線を削除しました');
             draw();
           } else {
@@ -1537,6 +1609,9 @@
             const remove = connectorIds.has(wire.startConnectorId) || connectorIds.has(wire.endConnectorId);
             return !remove;
           });
+          if (state.wireMenu.isOpen && !state.wires.some(wire => wire.id === state.wireMenu.wireId)) {
+            closeWireMenu();
+          }
 
           if (state.hoverWireId && !state.wires.some(wire => wire.id === state.hoverWireId)) {
             state.hoverWireId = null;
@@ -1588,11 +1663,11 @@
               usedJunctionIds.add(wire.endConnectorId);
             }
           });
-          state.junctions = state.junctions.filter(junction => usedJunctionIds.has(junction.id));
-          state.junctionIndex = new Map();
-          state.junctions.forEach(junction => {
-            state.junctionIndex.set(junction.id, junction);
-          });
+        state.junctions = state.junctions.filter(junction => usedJunctionIds.has(junction.id));
+        state.junctionIndex = new Map();
+        state.junctions.forEach(junction => {
+          state.junctionIndex.set(junction.id, junction);
+        });
         }
 
         function updateStatusTip(message) {
@@ -2001,13 +2076,12 @@
 
         function createJunction(point) {
           state.counters.junction += 1;
-          const sleeveType = state.selectedSleeveType;
           const junction = {
             id: 'junction-' + state.counters.junction,
             label: 'J' + state.counters.junction,
             x: point.x,
             y: point.y,
-            sleeveType
+            sleeveType: null
           };
           state.junctions.push(junction);
           state.junctionIndex.set(junction.id, junction);
@@ -2183,11 +2257,11 @@
             });
           });
 
-          const conductorMap = new Map();
-          state.wires.forEach(wire => {
-            const key = [wire.startConnectorId, wire.endConnectorId].slice().sort().join('::');
-            [wire.startConnectorId, wire.endConnectorId].forEach(connectorId => {
-              if (!connectorMap.has(connectorId)) return;
+        const conductorMap = new Map();
+        state.wires.forEach(wire => {
+          const key = [wire.startConnectorId, wire.endConnectorId].slice().sort().join('::');
+          [wire.startConnectorId, wire.endConnectorId].forEach(connectorId => {
+            if (!connectorMap.has(connectorId)) return;
               const entry = connectorMap.get(connectorId);
               const componentId = entry.component.id;
               if (!conductorMap.has(componentId)) {
@@ -2202,16 +2276,41 @@
                 connectionMap.set(key, new Set());
               }
               connectionMap.get(key).add(wire.color);
-            });
           });
+        });
 
-          const errors = [];
-          const warnings = [];
-          conductorMap.forEach((connections, componentId) => {
-            const component = getComponentById(componentId);
-            if (!component) return;
-            if (component.type === 'switch' || component.type === 'pilot') {
+        const errors = [];
+        const warnings = [];
+        state.components
+          .filter(component => component.type === 'outlet')
+          .forEach(component => {
+            const neutralConnector = component.connectors.find(connector => connector.key === 'neutral');
+            if (!neutralConnector) return;
+            const componentConnections = conductorMap.get(component.id);
+            if (!componentConnections) {
+              errors.push('コンセントのW側に青色の芯線が接続されていません');
               return;
+            }
+            const neutralEntry = componentConnections.get(neutralConnector.id);
+            if (!neutralEntry) {
+              errors.push('コンセントのW側に青色の芯線が接続されていません');
+              return;
+            }
+            let hasBlue = false;
+            neutralEntry.forEach(colorSet => {
+              if (colorSet.has('blue')) {
+                hasBlue = true;
+              }
+            });
+            if (!hasBlue) {
+              errors.push('コンセントのW側に青色の芯線が接続されていません');
+            }
+          });
+        conductorMap.forEach((connections, componentId) => {
+          const component = getComponentById(componentId);
+          if (!component) return;
+          if (component.type === 'switch' || component.type === 'pilot') {
+            return;
             }
             const involvedColors = new Set();
             connections.forEach(connectionMap => {
