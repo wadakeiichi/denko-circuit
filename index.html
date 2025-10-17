@@ -385,6 +385,18 @@
               { key: 'out', label: 'OUT', color: 'black', role: 'switched', offset: { x: 110, y: 50 } }
             ]
           },
+          threeWaySwitch: {
+            type: 'threeWaySwitch',
+            displayName: '三極スイッチ',
+            label: '三極スイッチ',
+            size: { width: 130, height: 120 },
+            defaultPosition: { x: 470, y: 220 },
+            connectors: [
+              { key: 'common', label: '0', color: 'black', role: 'hot', offset: { x: 24, y: 60 } },
+              { key: 'traveler1', label: '1', color: 'black', role: 'switched', offset: { x: 106, y: 40 } },
+              { key: 'traveler3', label: '3', color: 'black', role: 'switched', offset: { x: 106, y: 80 } }
+            ]
+          },
           outlet: {
             type: 'outlet',
             displayName: 'コンセント',
@@ -420,7 +432,7 @@
           }
         };
 
-        const rotatableComponentTypes = new Set(['switch', 'outlet', 'lamp', 'pilot']);
+        const rotatableComponentTypes = new Set(['switch', 'threeWaySwitch', 'outlet', 'lamp', 'pilot']);
 
         const initialComponentLayout = [
           { type: 'power' },
@@ -449,17 +461,19 @@
           pilotOn: false,
           outletStatuses: new Map(),
           pendingComponentType: null,
-          primaryIds: { power: null, switch: null, lamp: null },
+          primaryIds: { power: null, switch: null, threeWaySwitch: null, lamp: null },
           pairingLabels: new Map(),
           pairingAssignments: new Map(),
           counters: {
             wire: 0,
             junction: 0,
-            component: { power: 0, switch: 0, outlet: 0, lamp: 0, pilot: 0 }
+            component: { power: 0, switch: 0, threeWaySwitch: 0, outlet: 0, lamp: 0, pilot: 0 }
           },
           sleeveMenu: { isOpen: false, junctionId: null },
           wireMenu: { isOpen: false, wireId: null },
-          showSleeveMarks: false
+          showSleeveMarks: false,
+          switchStates: new Map(),
+          threeWaySwitchStates: new Map()
         };
 
         const history = [];
@@ -695,7 +709,7 @@
         }
 
         function isPairingComponent(component) {
-          return component.type === 'switch' || component.type === 'lamp' || component.type === 'pilot';
+          return component.type === 'switch' || component.type === 'threeWaySwitch' || component.type === 'lamp' || component.type === 'pilot';
         }
 
         function handlePairingSelection(componentId, label) {
@@ -767,7 +781,9 @@
             pendingComponentType: state.pendingComponentType,
             primaryIds: { ...state.primaryIds },
             pairingAssignments: Array.from(state.pairingAssignments.entries()),
-            counters: JSON.parse(JSON.stringify(state.counters))
+            counters: JSON.parse(JSON.stringify(state.counters)),
+            switchStates: Array.from(state.switchStates.entries()),
+            threeWaySwitchStates: Array.from(state.threeWaySwitchStates.entries())
           };
         }
 
@@ -825,9 +841,20 @@
           state.junctions.forEach(junction => {
             state.junctionIndex.set(junction.id, junction);
           });
+          state.switchStates = new Map((snapshot.switchStates || []).map(([key, value]) => [key, Boolean(value)]));
+          state.threeWaySwitchStates = new Map(snapshot.threeWaySwitchStates || []);
           state.switchClosed = Boolean(snapshot.switchClosed);
           state.pendingComponentType = snapshot.pendingComponentType || null;
           state.primaryIds = { ...snapshot.primaryIds };
+          state.components.forEach(initializeComponentState);
+          if ((!snapshot.switchStates || snapshot.switchStates.length === 0) && state.primaryIds.switch) {
+            setSwitchState(state.primaryIds.switch, Boolean(snapshot.switchClosed));
+          }
+          if (state.primaryIds.switch) {
+            state.switchClosed = getSwitchState(state.primaryIds.switch);
+          } else {
+            state.switchClosed = false;
+          }
           state.pairingAssignments = new Map(snapshot.pairingAssignments || []);
           state.pairingLabels = new Map();
           state.counters = JSON.parse(JSON.stringify(snapshot.counters));
@@ -916,6 +943,7 @@
           if (!component) return null;
           recordHistory();
           state.components.push(component);
+          initializeComponentState(component);
           if (isPairingComponent(component)) {
             state.pairingAssignments.set(component.id, null);
           }
@@ -982,6 +1010,66 @@
             }))
           };
           return component;
+        }
+
+        function getSwitchState(componentId) {
+          if (!componentId) return false;
+          if (!state.switchStates.has(componentId)) {
+            state.switchStates.set(componentId, false);
+          }
+          return state.switchStates.get(componentId);
+        }
+
+        function setSwitchState(componentId, value) {
+          if (!componentId) return;
+          const normalized = Boolean(value);
+          state.switchStates.set(componentId, normalized);
+          if (state.primaryIds.switch === componentId) {
+            state.switchClosed = normalized;
+          }
+        }
+
+        function getThreeWayState(componentId) {
+          if (!componentId) return 'traveler1';
+          if (!state.threeWaySwitchStates.has(componentId)) {
+            state.threeWaySwitchStates.set(componentId, 'traveler1');
+          }
+          return state.threeWaySwitchStates.get(componentId);
+        }
+
+        function setThreeWayState(componentId, key) {
+          if (!componentId) return;
+          const normalized = key === 'traveler3' ? 'traveler3' : 'traveler1';
+          state.threeWaySwitchStates.set(componentId, normalized);
+        }
+
+        function toggleThreeWayState(componentId) {
+          const current = getThreeWayState(componentId);
+          const next = current === 'traveler1' ? 'traveler3' : 'traveler1';
+          setThreeWayState(componentId, next);
+          return next;
+        }
+
+        function getThreeWayConnectorLabel(component, key) {
+          if (!component) return '';
+          const connector = component.connectors.find(entry => entry.key === key);
+          return connector ? (connector.label || '') : '';
+        }
+
+        function initializeComponentState(component) {
+          if (!component) return;
+          if (component.type === 'switch') {
+            if (!state.switchStates.has(component.id)) {
+              state.switchStates.set(component.id, false);
+            }
+            if (state.primaryIds.switch === component.id) {
+              state.switchClosed = getSwitchState(component.id);
+            }
+          } else if (component.type === 'threeWaySwitch') {
+            if (!state.threeWaySwitchStates.has(component.id)) {
+              state.threeWaySwitchStates.set(component.id, 'traveler1');
+            }
+          }
         }
 
         function isRotatableType(type) {
@@ -1204,31 +1292,36 @@
         }
 
         function toggleSwitch() {
-          const primarySwitch = state.primaryIds.switch ? getComponentById(state.primaryIds.switch) : null;
-          if (!primarySwitch) {
+          const primarySwitchId = state.primaryIds.switch;
+          const primarySwitch = primarySwitchId ? getComponentById(primarySwitchId) : null;
+          if (!primarySwitchId || !primarySwitch) {
             updateStatusTip('スイッチが配置されていません');
             state.switchClosed = false;
             updateSwitchUI();
             return;
           }
           recordHistory();
-          state.switchClosed = !state.switchClosed;
+          const nextState = !getSwitchState(primarySwitchId);
+          setSwitchState(primarySwitchId, nextState);
           updateSwitchUI();
-          updateStatusTip(state.switchClosed ? 'スイッチを入れました' : 'スイッチを切りました');
+          updateStatusTip(nextState ? 'スイッチを入れました' : 'スイッチを切りました');
           draw();
         }
 
         function updateSwitchUI() {
           if (!switchToggle) return;
-          const primarySwitch = state.primaryIds.switch ? getComponentById(state.primaryIds.switch) : null;
+          const primarySwitchId = state.primaryIds.switch;
+          const primarySwitch = primarySwitchId ? getComponentById(primarySwitchId) : null;
           const hasSwitch = Boolean(primarySwitch);
           switchToggle.disabled = !hasSwitch;
           if (hasSwitch) {
-            const isOn = state.switchClosed;
+            const isOn = getSwitchState(primarySwitchId);
+            state.switchClosed = isOn;
             switchToggle.textContent = isOn ? '入 (ON)' : '切 (OFF)';
             switchToggle.classList.toggle('on', isOn);
             switchToggle.setAttribute('aria-pressed', isOn ? 'true' : 'false');
           } else {
+            state.switchClosed = false;
             switchToggle.textContent = 'スイッチ未配置';
             switchToggle.classList.remove('on');
             switchToggle.setAttribute('aria-pressed', 'false');
@@ -1303,6 +1396,29 @@
           if (!evt.ctrlKey) {
             closeSleeveMenu();
             closeWireMenu();
+          }
+
+          if (evt.shiftKey && !evt.ctrlKey && !evt.altKey) {
+            const targetComponent = findComponentAt(point);
+            if (targetComponent && (targetComponent.type === 'switch' || targetComponent.type === 'threeWaySwitch')) {
+              recordHistory();
+              const template = componentTemplates[targetComponent.type];
+              const displayName = template ? template.displayName : (targetComponent.label || '').replace(/\n/g, ' ');
+              if (targetComponent.type === 'switch') {
+                const nextState = !getSwitchState(targetComponent.id);
+                setSwitchState(targetComponent.id, nextState);
+                updateSwitchUI();
+                updateStatusTip((displayName || 'スイッチ') + 'を' + (nextState ? '入にしました' : '切にしました'));
+              } else {
+                const nextKey = toggleThreeWayState(targetComponent.id);
+                const connectorLabel = getThreeWayConnectorLabel(targetComponent, nextKey) || (nextKey === 'traveler3' ? '3' : '1');
+                updateStatusTip((displayName || '三極スイッチ') + 'を端子' + connectorLabel + '側に切り替えました');
+              }
+              draw();
+            } else {
+              updateStatusTip('Shift+クリックはスイッチ上でのみ有効です');
+            }
+            return;
           }
 
           if (evt.altKey && !evt.ctrlKey) {
@@ -1492,6 +1608,12 @@
             return;
           }
 
+          const componentAtPoint = findComponentAt(point);
+          if (componentAtPoint) {
+            updateStatusTip('端子をダブルクリックして配線を開始してください');
+            return;
+          }
+
           recordHistory();
           const newJunction = createJunction(point);
           state.hoverConnectorId = newJunction.id;
@@ -1661,6 +1783,8 @@
           recordHistory();
           const connectorIds = new Set(component.connectors.map(connector => connector.id));
           state.components = state.components.filter(item => item.id !== component.id);
+          state.switchStates.delete(component.id);
+          state.threeWaySwitchStates.delete(component.id);
 
           state.wires = state.wires.filter(wire => {
             const remove = connectorIds.has(wire.startConnectorId) || connectorIds.has(wire.endConnectorId);
@@ -1691,7 +1815,9 @@
             const replacement = state.components.find(item => item.type === component.type) || null;
             state.primaryIds[component.type] = replacement ? replacement.id : null;
             if (component.type === 'switch') {
-              state.switchClosed = false;
+              const nextPrimaryId = state.primaryIds.switch;
+              const nextState = nextPrimaryId ? getSwitchState(nextPrimaryId) : false;
+              state.switchClosed = nextState;
               updateSwitchUI();
             }
           }
@@ -1860,6 +1986,9 @@
               case 'switch':
                 drawSwitch(component);
                 break;
+              case 'threeWaySwitch':
+                drawThreeWaySwitch(component);
+                break;
               case 'outlet':
                 drawOutlet(component);
                 break;
@@ -1873,9 +2002,27 @@
                 drawGeneric(component);
                 break;
             }
+            const activeThreeWayKey = component.type === 'threeWaySwitch' ? getThreeWayState(component.id) : null;
+            const switchIsOn = component.type === 'switch' ? getSwitchState(component.id) : false;
             component.connectors.forEach(connector => {
               const position = getConnectorPositionById(connector.id);
-              drawConnectorNode(position, connector);
+              const options = {};
+              if (component.type === 'switch') {
+                if (switchIsOn && (connector.key === 'in' || connector.key === 'out')) {
+                  options.active = true;
+                }
+              } else if (component.type === 'threeWaySwitch') {
+                if (connector.key === 'common') {
+                  options.active = true;
+                  options.accentColor = '#0f172a';
+                } else if (connector.key === activeThreeWayKey) {
+                  options.active = true;
+                  options.accentColor = '#15803d';
+                } else if (connector.key === 'traveler1' || connector.key === 'traveler3') {
+                  options.accentColor = '#94a3b8';
+                }
+              }
+              drawConnectorNode(position, connector, options);
             });
           });
         }
@@ -1910,13 +2057,13 @@
         }
 
         function drawSwitch(component) {
+          const isOn = getSwitchState(component.id);
           drawComponentWithRotation(component, ({ width, height }) => {
             const x = 0;
             const y = 0;
             ctx.save();
-            const isOn = state.switchClosed;
-            ctx.strokeStyle = '#1f2937';
-            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = '#cbd5f5';
+            ctx.lineWidth = 1;
             ctx.strokeRect(x, y, width, height);
             const leftContact = {
               x: x + 22,
@@ -1933,6 +2080,7 @@
             ctx.fill();
             ctx.strokeStyle = '#0f172a';
             ctx.lineWidth = 2.5;
+            ctx.setLineDash([]);
             ctx.beginPath();
             ctx.moveTo(leftContact.x, leftContact.y);
             if (isOn) {
@@ -1959,13 +2107,75 @@
           ctx.textAlign = 'center';
           ctx.fillText(component.label, cx, position.y - 10);
           ctx.font = '12px "Segoe UI", sans-serif';
-          ctx.fillText(state.switchClosed ? '入' : '切', cx, position.y + size.height - 12);
+          ctx.fillText(isOn ? '入' : '切', cx, position.y + size.height - 12);
           if (switchLabel) {
             ctx.font = 'bold 18px "Segoe UI", sans-serif';
             ctx.fillStyle = '#c2410c';
             ctx.textAlign = 'right';
             ctx.fillText(switchLabel, position.x + size.width - 6, position.y + 18);
           }
+          ctx.restore();
+        }
+
+        function drawThreeWaySwitch(component) {
+          const activeKey = getThreeWayState(component.id);
+          drawComponentWithRotation(component, ({ width, height }) => {
+            const x = 0;
+            const y = 0;
+            const commonContact = { x: x + 24, y: y + height / 2 };
+            const upperContact = { x: x + width - 24, y: y + height / 3 };
+            const lowerContact = { x: x + width - 24, y: y + (2 * height) / 3 };
+            ctx.save();
+            ctx.strokeStyle = '#cbd5f5';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y, width, height);
+            const activeContact = activeKey === 'traveler3' ? lowerContact : upperContact;
+            const inactiveContact = activeKey === 'traveler3' ? upperContact : lowerContact;
+            const activeStroke = '#16a34a';
+            const inactiveStroke = '#94a3b8';
+            const drawTerminal = (point, color, radius = 5) => {
+              ctx.beginPath();
+              ctx.fillStyle = color;
+              ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+              ctx.fill();
+            };
+            drawTerminal(commonContact, '#0f172a');
+            drawTerminal(upperContact, activeKey === 'traveler1' ? activeStroke : inactiveStroke);
+            drawTerminal(lowerContact, activeKey === 'traveler3' ? activeStroke : inactiveStroke);
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([]);
+            ctx.strokeStyle = activeStroke;
+            ctx.beginPath();
+            ctx.moveTo(commonContact.x, commonContact.y);
+            ctx.lineTo(activeContact.x, activeContact.y);
+            ctx.stroke();
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = inactiveStroke;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(commonContact.x, commonContact.y);
+            ctx.lineTo(inactiveContact.x, inactiveContact.y);
+            ctx.stroke();
+            ctx.lineWidth = 1.2;
+            ctx.font = '11px "Segoe UI", sans-serif';
+            ctx.fillStyle = '#475569';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('0', commonContact.x, commonContact.y - 12);
+            ctx.fillText('1', upperContact.x + 12, upperContact.y);
+            ctx.fillText('3', lowerContact.x + 12, lowerContact.y);
+            ctx.restore();
+          });
+          const { position, size } = component;
+          const cx = position.x + size.width / 2;
+          const activeLabel = getThreeWayConnectorLabel(component, activeKey) || (activeKey === 'traveler3' ? '3' : '1');
+          ctx.save();
+          ctx.font = '14px "Segoe UI", sans-serif';
+          ctx.fillStyle = '#1f2937';
+          ctx.textAlign = 'center';
+          ctx.fillText(component.label, cx, position.y - 10);
+          ctx.font = '12px "Segoe UI", sans-serif';
+          ctx.fillText('接点: ' + activeLabel, cx, position.y + size.height - 12);
           ctx.restore();
         }
 
@@ -1983,8 +2193,8 @@
             const cy = y + height / 2;
             const radius = Math.min(width, height) / 2.6;
             ctx.save();
-            ctx.strokeStyle = '#1f2937';
-            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = '#cbd5f5';
+            ctx.lineWidth = 1;
             ctx.strokeRect(x, y, width, height);
             ctx.beginPath();
             ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -2120,20 +2330,25 @@
           ctx.restore();
         }
 
-        function drawConnectorNode(position, connector) {
+        function drawConnectorNode(position, connector, options = {}) {
           if (!position) return;
           ctx.save();
-          const radius = 8;
+          const { active = false, accentColor = '#2563eb' } = options;
+          const radius = active ? 9 : 8;
           const isHover = state.hoverConnectorId === connector.id;
-          ctx.fillStyle = isHover ? '#dbeafe' : '#ffffff';
-          ctx.strokeStyle = isHover ? '#2563eb' : '#0f172a';
-          ctx.lineWidth = 2;
+          const baseFill = isHover ? '#dbeafe' : '#ffffff';
+          const activeFill = active ? '#fefce8' : baseFill;
+          const baseStroke = isHover ? '#2563eb' : '#0f172a';
+          const strokeColor = active ? accentColor : baseStroke;
+          ctx.fillStyle = active ? activeFill : baseFill;
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = active ? 2.4 : 2;
           ctx.beginPath();
           ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
           ctx.font = '12px "Segoe UI", sans-serif';
-          ctx.fillStyle = '#0f172a';
+          ctx.fillStyle = active ? accentColor : '#0f172a';
           ctx.textAlign = 'center';
           ctx.fillText(connector.label, position.x, position.y + 20);
           ctx.restore();
@@ -2234,11 +2449,20 @@
             .filter(component => component.type === 'pilot')
             .map(component => getConnectorId(component.id, 'neutral'));
 
-          if (state.switchClosed && primarySwitchId) {
-            const switchInId = getConnectorId(primarySwitchId, 'in');
-            const switchOutId = getConnectorId(primarySwitchId, 'out');
-            addEdge(switchInId, switchOutId);
-          }
+          state.components.forEach(component => {
+            if (component.type === 'switch') {
+              if (getSwitchState(component.id)) {
+                const switchInId = getConnectorId(component.id, 'in');
+                const switchOutId = getConnectorId(component.id, 'out');
+                addEdge(switchInId, switchOutId);
+              }
+            } else if (component.type === 'threeWaySwitch') {
+              const commonId = getConnectorId(component.id, 'common');
+              const activeKey = getThreeWayState(component.id);
+              const travelerId = getConnectorId(component.id, activeKey);
+              addEdge(commonId, travelerId);
+            }
+          });
 
           const hotConnected = hasPath(powerHotId, lampHotId);
           const neutralConnected = hasPath(lampNeutralId, powerNeutralId);
@@ -2297,11 +2521,25 @@
           const usedLoads = new Set();
           const pairs = [];
           state.components.forEach(component => {
-            if (component.type !== 'switch') return;
+            if (component.type !== 'switch' && component.type !== 'threeWaySwitch') return;
             if (state.pairingLabels.has(component.id)) return;
-            const outConnector = component.connectors.find(connector => connector.key === 'out');
-            if (!outConnector) return;
-            const loadConnectorId = findLoadForSwitch(outConnector.id, adjacency, usedLoads);
+            const startConnectors = [];
+            if (component.type === 'switch') {
+              const outConnector = component.connectors.find(connector => connector.key === 'out');
+              if (outConnector) {
+                startConnectors.push(outConnector.id);
+              }
+            } else {
+              component.connectors
+                .filter(connector => connector.key === 'traveler1' || connector.key === 'traveler3')
+                .forEach(connector => startConnectors.push(connector.id));
+            }
+            if (!startConnectors.length) return;
+            let loadConnectorId = null;
+            for (const connectorId of startConnectors) {
+              loadConnectorId = findLoadForSwitch(connectorId, adjacency, usedLoads);
+              if (loadConnectorId) break;
+            }
             if (!loadConnectorId) return;
             const loadEntry = componentConnectorIndex.get(loadConnectorId);
             if (!loadEntry) return;
@@ -2338,7 +2576,10 @@
                     return neighbor;
                   }
                 }
-                if (component.type === 'switch' && connector.key === 'out') {
+                if (
+                  (component.type === 'switch' && connector.key === 'out') ||
+                  (component.type === 'threeWaySwitch' && (connector.key === 'traveler1' || connector.key === 'traveler3'))
+                ) {
                   continue;
                 }
               }
@@ -2408,7 +2649,7 @@
         conductorMap.forEach((connections, componentId) => {
           const component = getComponentById(componentId);
           if (!component) return;
-          if (component.type === 'switch' || component.type === 'pilot') {
+          if (component.type === 'switch' || component.type === 'threeWaySwitch' || component.type === 'pilot') {
             return;
             }
             const involvedColors = new Set();
@@ -2602,7 +2843,7 @@
         }
 
         function findConnectorAt(point) {
-          const radius = 12;
+          const radius = 16;
           for (const component of state.components) {
             for (const connector of component.connectors) {
               const position = getConnectorPositionById(connector.id);
