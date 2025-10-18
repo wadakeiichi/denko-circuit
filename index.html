@@ -1398,6 +1398,26 @@
             closeWireMenu();
           }
 
+          if (evt.ctrlKey && evt.shiftKey && !evt.altKey) {
+            closeSleeveMenu();
+            closeWireMenu();
+            const hit = findWireSegment(point);
+            if (hit && hit.distance <= 14) {
+              recordHistory();
+              const rerouted = rerouteWireOrthogonally(hit.wire, point);
+              if (rerouted) {
+                simplifyWirePoints(hit.wire);
+                updateStatusTip('配線を直角経路に再配置しました');
+                draw();
+              } else {
+                updateStatusTip('他の配線を避ける経路を見つけられませんでした');
+              }
+            } else {
+              updateStatusTip('Ctrl+Shift+クリックは配線上で行ってください');
+            }
+            return;
+          }
+
           if (evt.shiftKey && !evt.ctrlKey && !evt.altKey) {
             const targetComponent = findComponentAt(point);
             if (targetComponent && (targetComponent.type === 'switch' || targetComponent.type === 'threeWaySwitch')) {
@@ -1892,6 +1912,277 @@
             }
           }
           wire.points = simplified;
+        }
+
+        // Rebuild the existing wire path using only horizontal/vertical segments while avoiding other wires.
+        function rerouteWireOrthogonally(wire, referencePoint = null) {
+          if (!wire || wire.points.length === 0) return false;
+          const start = getConnectorPositionById(wire.startConnectorId) ||
+            (wire.points[0] ? { x: wire.points[0].x, y: wire.points[0].y } : null);
+          const end = getConnectorPositionById(wire.endConnectorId) ||
+            (wire.points[wire.points.length - 1]
+              ? { x: wire.points[wire.points.length - 1].x, y: wire.points[wire.points.length - 1].y }
+              : null);
+          if (!start || !end) return false;
+
+          const obstacles = collectWireSegments(wire.id);
+          if (isSegmentClear(start, end, obstacles)) {
+            wire.points = [{ x: start.x, y: start.y }, { x: end.x, y: end.y }];
+            return true;
+          }
+
+          const path = findOrthogonalPath(start, end, obstacles, referencePoint);
+          if (!path) return false;
+          wire.points = path;
+          return true;
+        }
+
+        function findOrthogonalPath(start, end, obstacles, referencePoint = null) {
+          const baseStep = 24;
+          const offsets = [baseStep, -baseStep, baseStep * 2, -baseStep * 2, baseStep * 3, -baseStep * 3, baseStep * 4, -baseStep * 4];
+
+          const xCandidates = new Set([start.x, end.x]);
+          const yCandidates = new Set([start.y, end.y]);
+          const baseXs = [start.x, end.x];
+          const baseYs = [start.y, end.y];
+
+          if (referencePoint) {
+            xCandidates.add(referencePoint.x);
+            yCandidates.add(referencePoint.y);
+            baseXs.push(referencePoint.x);
+            baseYs.push(referencePoint.y);
+          }
+
+          baseXs.forEach(value => {
+            offsets.forEach(offset => {
+              xCandidates.add(value + offset);
+            });
+          });
+          baseYs.forEach(value => {
+            offsets.forEach(offset => {
+              yCandidates.add(value + offset);
+            });
+          });
+
+          obstacles.forEach(segment => {
+            if (Math.abs(segment.start.x - segment.end.x) < 0.5) {
+              xCandidates.add(segment.start.x);
+              xCandidates.add(segment.start.x + baseStep);
+              xCandidates.add(segment.start.x - baseStep);
+            }
+            if (Math.abs(segment.start.y - segment.end.y) < 0.5) {
+              yCandidates.add(segment.start.y);
+              yCandidates.add(segment.start.y + baseStep);
+              yCandidates.add(segment.start.y - baseStep);
+            }
+          });
+
+          const xs = Array.from(xCandidates).map(normalizeCoordinate).sort((a, b) => a - b);
+          const ys = Array.from(yCandidates).map(normalizeCoordinate).sort((a, b) => a - b);
+
+          const nodeMap = new Map();
+          const nodesByX = new Map();
+          const nodesByY = new Map();
+
+          function pushNode(point) {
+            const normalized = { x: normalizeCoordinate(point.x), y: normalizeCoordinate(point.y) };
+            const key = pointKey(normalized);
+            if (nodeMap.has(key)) {
+              return nodeMap.get(key);
+            }
+            const node = { ...normalized, key };
+            nodeMap.set(key, node);
+            const xKey = coordKey(node.x);
+            const yKey = coordKey(node.y);
+            if (!nodesByX.has(xKey)) nodesByX.set(xKey, []);
+            if (!nodesByY.has(yKey)) nodesByY.set(yKey, []);
+            nodesByX.get(xKey).push(node);
+            nodesByY.get(yKey).push(node);
+            return node;
+          }
+
+          xs.forEach(x => {
+            ys.forEach(y => {
+              pushNode({ x, y });
+            });
+          });
+
+          const startNode = pushNode(start);
+          const endNode = pushNode(end);
+
+          const visited = new Set();
+          const previous = new Map();
+          const queue = [startNode];
+          visited.add(startNode.key);
+
+          while (queue.length > 0) {
+            const current = queue.shift();
+            if (current.key === endNode.key) break;
+            const neighbors = getOrthogonalNeighbors(current, nodesByX, nodesByY, obstacles);
+            neighbors.forEach(next => {
+              if (visited.has(next.key)) return;
+              visited.add(next.key);
+              previous.set(next.key, current.key);
+              queue.push(next);
+            });
+          }
+
+          if (!visited.has(endNode.key)) return null;
+
+          const path = [];
+          let cursorKey = endNode.key;
+          while (cursorKey) {
+            const node = nodeMap.get(cursorKey);
+            path.push({ x: node.x, y: node.y });
+            cursorKey = previous.get(cursorKey) || null;
+          }
+          path.reverse();
+          return compactColinearPoints(path);
+        }
+
+        function getOrthogonalNeighbors(node, nodesByX, nodesByY, obstacles) {
+          const candidates = [];
+          const seen = new Set();
+
+          const xBucket = nodesByX.get(coordKey(node.x)) || [];
+          xBucket.forEach(candidate => {
+            if (candidate.key === node.key) return;
+            if (seen.has(candidate.key)) return;
+            if (isSegmentClear(node, candidate, obstacles)) {
+              seen.add(candidate.key);
+              candidates.push(candidate);
+            }
+          });
+
+          const yBucket = nodesByY.get(coordKey(node.y)) || [];
+          yBucket.forEach(candidate => {
+            if (candidate.key === node.key) return;
+            if (seen.has(candidate.key)) return;
+            if (isSegmentClear(node, candidate, obstacles)) {
+              seen.add(candidate.key);
+              candidates.push(candidate);
+            }
+          });
+
+          candidates.sort((a, b) => distance(a, node) - distance(b, node));
+          return candidates;
+        }
+
+        function normalizeCoordinate(value) {
+          const rounded = Math.abs(value) < 0.0001 ? 0 : value;
+          return Number(rounded.toFixed(3));
+        }
+
+        function coordKey(value) {
+          return normalizeCoordinate(value).toFixed(3);
+        }
+
+        function pointKey(point) {
+          return coordKey(point.x) + ':' + coordKey(point.y);
+        }
+
+        function collectWireSegments(excludeWireId = null) {
+          const segments = [];
+          state.wires.forEach(existing => {
+            if (excludeWireId && existing.id === excludeWireId) return;
+            syncWireEndpoints(existing);
+            for (let i = 0; i < existing.points.length - 1; i += 1) {
+              const start = existing.points[i];
+              const end = existing.points[i + 1];
+              segments.push({
+                start: { x: start.x, y: start.y },
+                end: { x: end.x, y: end.y }
+              });
+            }
+          });
+          return segments;
+        }
+
+        function isSegmentClear(start, end, obstacles) {
+          if (distance(start, end) < 0.5) return true;
+          for (const segment of obstacles) {
+            if (segmentsConflict(start, end, segment.start, segment.end)) {
+              return false;
+            }
+          }
+          return true;
+        }
+
+        function segmentsConflict(a1, a2, b1, b2) {
+          if (!segmentsIntersect(a1, a2, b1, b2)) return false;
+          const colinear = areColinear(a1, a2, b1) && areColinear(a1, a2, b2);
+          const sharesEndpoint =
+            pointsAreEqual(a1, b1) || pointsAreEqual(a1, b2) ||
+            pointsAreEqual(a2, b1) || pointsAreEqual(a2, b2);
+
+          if (!colinear) {
+            return !sharesEndpoint;
+          }
+
+          const touchesOnlyAtEndpoints =
+            (!onSegment(a1, b1, a2) || pointsAreEqual(b1, a1) || pointsAreEqual(b1, a2)) &&
+            (!onSegment(a1, b2, a2) || pointsAreEqual(b2, a1) || pointsAreEqual(b2, a2)) &&
+            (!onSegment(b1, a1, b2) || pointsAreEqual(a1, b1) || pointsAreEqual(a1, b2)) &&
+            (!onSegment(b1, a2, b2) || pointsAreEqual(a2, b1) || pointsAreEqual(a2, b2));
+
+          if (touchesOnlyAtEndpoints && sharesEndpoint) {
+            return false;
+          }
+          return true;
+        }
+
+        function segmentsIntersect(p1, q1, p2, q2) {
+          const o1 = orientation(p1, q1, p2);
+          const o2 = orientation(p1, q1, q2);
+          const o3 = orientation(p2, q2, p1);
+          const o4 = orientation(p2, q2, q1);
+
+          if (o1 !== o2 && o3 !== o4) return true;
+          if (o1 === 0 && onSegment(p1, p2, q1)) return true;
+          if (o2 === 0 && onSegment(p1, q2, q1)) return true;
+          if (o3 === 0 && onSegment(p2, p1, q2)) return true;
+          if (o4 === 0 && onSegment(p2, q1, q2)) return true;
+          return false;
+        }
+
+        function orientation(p, q, r) {
+          const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+          if (Math.abs(val) < 1e-6) return 0;
+          return val > 0 ? 1 : -1;
+        }
+
+        function onSegment(p, q, r) {
+          return (
+            q.x <= Math.max(p.x, r.x) + 1e-6 &&
+            q.x + 1e-6 >= Math.min(p.x, r.x) &&
+            q.y <= Math.max(p.y, r.y) + 1e-6 &&
+            q.y + 1e-6 >= Math.min(p.y, r.y)
+          );
+        }
+
+        function pointsAreEqual(a, b) {
+          return distance(a, b) < 0.5;
+        }
+
+        function areColinear(a, b, c) {
+          return Math.abs((b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y)) < 1e-6;
+        }
+
+        function compactColinearPoints(points) {
+          if (points.length <= 2) {
+            return points.map(point => ({ x: point.x, y: point.y }));
+          }
+          const result = [points[0]];
+          for (let i = 1; i < points.length - 1; i += 1) {
+            const prev = result[result.length - 1];
+            const current = points[i];
+            const next = points[i + 1];
+            if (areColinear(prev, current, next)) continue;
+            result.push({ x: current.x, y: current.y });
+          }
+          const last = points[points.length - 1];
+          result.push({ x: last.x, y: last.y });
+          return result;
         }
 
         function resizeCanvas() {
