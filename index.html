@@ -317,6 +317,7 @@
             <button id="undo-button" type="button" class="check-button" disabled>戻る</button>
             <button id="check-wiring" type="button" class="check-button">配線チェック</button>
             <button id="check-sleeves" type="button" class="check-button">スリーブチェック</button>
+            <button id="arrange-conductors" type="button" class="check-button">芯線整列</button>
             <span id="status-tip"></span>
           </div>
         </div>
@@ -352,6 +353,7 @@
           { id: 'red_1_6', label: '赤 1.6mm', color: 'red', gauge: '1.6' },
           { id: 'red_2_0', label: '赤 2.0mm', color: 'red', gauge: '2.0' }
         ];
+        const conductorArrangementSpacing = 14;
 
         const pairingKana = ['イ', 'ロ', 'ハ', 'ニ', 'ホ', 'ヘ', 'ト', 'チ', 'リ', 'ヌ', 'ル', 'ヲ', 'ワ', 'カ', 'ヨ', 'タ', 'レ', 'ソ', 'ツ', 'ネ', 'ナ', 'ラ', 'ム', 'ウ', 'ヰ', 'ノ', 'オ', 'ク', 'ヤ', 'マ', 'ケ', 'フ', 'コ', 'エ', 'テ', 'ア', 'サ', 'キ', 'ユ', 'メ', 'ミ', 'シ', 'ヱ', 'ヒ', 'モ', 'セ', 'ス'];
         const pairingOptions = pairingKana.slice(0, 10);
@@ -378,11 +380,13 @@
             type: 'switch',
             displayName: '単極スイッチ',
             label: '単極スイッチ',
-            size: { width: 110, height: 100 },
+            size: { width: 120, height: 110 },
             defaultPosition: { x: 340, y: 210 },
             connectors: [
-              { key: 'in', label: 'IN', color: 'black', role: 'hot', offset: { x: 0, y: 50 } },
-              { key: 'out', label: 'OUT', color: 'black', role: 'switched', offset: { x: 110, y: 50 } }
+              { key: 'leftTop', label: '', color: 'black', role: 'hot', offset: { x: 0, y: 36 } },
+              { key: 'leftBottom', label: '', color: 'black', role: 'hot', offset: { x: 0, y: 84 } },
+              { key: 'rightTop', label: '', color: 'black', role: 'hot', offset: { x: 120, y: 36 } },
+              { key: 'rightBottom', label: '', color: 'black', role: 'hot', offset: { x: 120, y: 84 } }
             ]
           },
           threeWaySwitch: {
@@ -395,6 +399,19 @@
               { key: 'common', label: '0', color: 'black', role: 'hot', offset: { x: 24, y: 60 } },
               { key: 'traveler1', label: '1', color: 'black', role: 'switched', offset: { x: 106, y: 40 } },
               { key: 'traveler3', label: '3', color: 'black', role: 'switched', offset: { x: 106, y: 80 } }
+            ]
+          },
+          locatorSwitch: {
+            type: 'locatorSwitch',
+            displayName: '位置表示灯付スイッチ',
+            label: 'ホタルスイッチ',
+            size: { width: 130, height: 120 },
+            defaultPosition: { x: 360, y: 320 },
+            connectors: [
+              { key: 'leftTop', label: '', color: 'black', role: 'hot', offset: { x: 0, y: 40 } },
+              { key: 'leftBottom', label: '', color: 'black', role: 'hot', offset: { x: 0, y: 88 } },
+              { key: 'rightTop', label: '', color: 'black', role: 'hot', offset: { x: 130, y: 40 } },
+              { key: 'rightBottom', label: '', color: 'black', role: 'hot', offset: { x: 130, y: 88 } }
             ]
           },
           outlet: {
@@ -432,7 +449,7 @@
           }
         };
 
-        const rotatableComponentTypes = new Set(['switch', 'threeWaySwitch', 'outlet', 'lamp', 'pilot']);
+        const rotatableComponentTypes = new Set(['switch', 'locatorSwitch', 'threeWaySwitch', 'outlet', 'lamp', 'pilot']);
 
         const initialComponentLayout = [
           { type: 'power' },
@@ -459,6 +476,8 @@
           switchClosed: false,
           lampOn: false,
           pilotOn: false,
+          locatorIndicators: new Map(),
+          switchSideStatus: new Map(),
           outletStatuses: new Map(),
           pendingComponentType: null,
           primaryIds: { power: null, switch: null, threeWaySwitch: null, lamp: null },
@@ -467,7 +486,7 @@
           counters: {
             wire: 0,
             junction: 0,
-            component: { power: 0, switch: 0, threeWaySwitch: 0, outlet: 0, lamp: 0, pilot: 0 }
+            component: { power: 0, switch: 0, locatorSwitch: 0, threeWaySwitch: 0, outlet: 0, lamp: 0, pilot: 0 }
           },
           sleeveMenu: { isOpen: false, junctionId: null },
           wireMenu: { isOpen: false, wireId: null },
@@ -498,6 +517,7 @@
         const pairingAssignmentsContainer = document.getElementById('pairing-assignments');
         const checkWiringButton = document.getElementById('check-wiring');
         const checkSleevesButton = document.getElementById('check-sleeves');
+        const arrangeConductorsButton = document.getElementById('arrange-conductors');
         const statusTip = document.getElementById('status-tip');
         const toolButtonsContainer = document.getElementById('tool-buttons');
         const sleeveMenu = document.getElementById('sleeve-menu');
@@ -542,6 +562,9 @@
               state.showSleeveMarks = true;
               draw();
             });
+          }
+          if (arrangeConductorsButton) {
+            arrangeConductorsButton.addEventListener('click', arrangeConductorsByColorGrouping);
           }
           if (undoButton) {
             undoButton.addEventListener('click', undoLastAction);
@@ -709,7 +732,7 @@
         }
 
         function isPairingComponent(component) {
-          return component.type === 'switch' || component.type === 'threeWaySwitch' || component.type === 'lamp' || component.type === 'pilot';
+          return component.type === 'switch' || component.type === 'locatorSwitch' || component.type === 'threeWaySwitch' || component.type === 'lamp' || component.type === 'pilot';
         }
 
         function handlePairingSelection(componentId, label) {
@@ -953,6 +976,9 @@
             !state.primaryIds[component.type]) {
             state.primaryIds[component.type] = component.id;
           }
+          if (component.type === 'locatorSwitch' && !state.primaryIds.switch) {
+            state.primaryIds.switch = component.id;
+          }
           rebuildConnectorIndex();
           updateSwitchUI();
           return component;
@@ -1058,7 +1084,7 @@
 
         function initializeComponentState(component) {
           if (!component) return;
-          if (component.type === 'switch') {
+          if (component.type === 'switch' || component.type === 'locatorSwitch') {
             if (!state.switchStates.has(component.id)) {
               state.switchStates.set(component.id, false);
             }
@@ -1115,6 +1141,42 @@
         function getConnectorId(componentId, key) {
           const connector = getConnectorByKey(componentId, key);
           return connector ? connector.id : null;
+        }
+
+        function getSwitchConnectorGroups(component) {
+          const left = [];
+          const right = [];
+          if (!component || !component.connectors) {
+            return { left, right };
+          }
+          component.connectors.forEach(connector => {
+            if (connector.key && connector.key.startsWith('left')) {
+              left.push(connector);
+            } else if (connector.key && connector.key.startsWith('right')) {
+              right.push(connector);
+            }
+          });
+          return { left, right };
+        }
+
+        function connectorIdsFromGroup(group) {
+          return group.map(connector => connector.id);
+        }
+
+        function connectConnectorSet(ids, addEdgeFn) {
+          for (let i = 0; i < ids.length; i += 1) {
+            for (let j = i + 1; j < ids.length; j += 1) {
+              addEdgeFn(ids[i], ids[j]);
+            }
+          }
+        }
+
+        function connectConnectorSets(idsA, idsB, addEdgeFn) {
+          idsA.forEach(idA => {
+            idsB.forEach(idB => {
+              addEdgeFn(idA, idB);
+            });
+          });
         }
 
         function buildToolButtons() {
@@ -1420,11 +1482,11 @@
 
           if (evt.shiftKey && !evt.ctrlKey && !evt.altKey) {
             const targetComponent = findComponentAt(point);
-            if (targetComponent && (targetComponent.type === 'switch' || targetComponent.type === 'threeWaySwitch')) {
+            if (targetComponent && (targetComponent.type === 'switch' || targetComponent.type === 'locatorSwitch' || targetComponent.type === 'threeWaySwitch')) {
               recordHistory();
               const template = componentTemplates[targetComponent.type];
               const displayName = template ? template.displayName : (targetComponent.label || '').replace(/\n/g, ' ');
-              if (targetComponent.type === 'switch') {
+              if (targetComponent.type === 'switch' || targetComponent.type === 'locatorSwitch') {
                 const nextState = !getSwitchState(targetComponent.id);
                 setSwitchState(targetComponent.id, nextState);
                 updateSwitchUI();
@@ -1830,16 +1892,19 @@
           }
           buildPairingControls();
 
-          if (Object.prototype.hasOwnProperty.call(state.primaryIds, component.type) &&
+          const isSwitchLike = component.type === 'switch' || component.type === 'locatorSwitch';
+          if (isSwitchLike && state.primaryIds.switch === component.id) {
+            const replacement = state.components.find(item => item.type === 'switch' || item.type === 'locatorSwitch') || null;
+            state.primaryIds.switch = replacement ? replacement.id : null;
+            const nextState = replacement ? getSwitchState(replacement.id) : false;
+            state.switchClosed = nextState;
+            updateSwitchUI();
+          }
+          if (component.type !== 'switch' &&
+            Object.prototype.hasOwnProperty.call(state.primaryIds, component.type) &&
             state.primaryIds[component.type] === component.id) {
             const replacement = state.components.find(item => item.type === component.type) || null;
             state.primaryIds[component.type] = replacement ? replacement.id : null;
-            if (component.type === 'switch') {
-              const nextPrimaryId = state.primaryIds.switch;
-              const nextState = nextPrimaryId ? getSwitchState(nextPrimaryId) : false;
-              state.switchClosed = nextState;
-              updateSwitchUI();
-            }
           }
 
           if (component.type === 'power' && !state.primaryIds.power) {
@@ -1934,6 +1999,336 @@
           const path = findOrthogonalPath(start, end, obstacles, referencePoint);
           if (!path) return false;
           wire.points = path;
+          return true;
+        }
+
+        function arrangeConductorsByColorGrouping() {
+          if (!state.wires.length) {
+            updateStatusTip('整列する芯線がありません');
+            return;
+          }
+
+          rebuildConnectorIndex();
+          const groups = new Map();
+          state.wires.forEach(wire => {
+            if (!wire.startConnectorId || !wire.endConnectorId) return;
+            syncWireEndpoints(wire);
+            const key = buildWireGroupKey(wire);
+            if (!key) return;
+            if (!groups.has(key)) {
+              groups.set(key, []);
+            }
+            groups.get(key).push(wire);
+          });
+
+          const pendingUpdates = [];
+          groups.forEach(group => {
+            if (group.length <= 1) return;
+            const ordered = sortWiresForArrangement(group);
+            const referenceWire = ordered[0];
+            const referenceStartPos = getConnectorPositionById(referenceWire.startConnectorId);
+            const referenceEndPos = getConnectorPositionById(referenceWire.endConnectorId);
+            if (!referenceStartPos || !referenceEndPos) return;
+            const basePath = buildAxisAlignedBundlePath(referenceStartPos, referenceEndPos);
+            if (!basePath || basePath.length === 0) return;
+            const offsets = computeConductorOffsets(ordered.length, conductorArrangementSpacing);
+            const referenceStartOwner = getConnectorOwnerKey(referenceWire.startConnectorId);
+            const referenceEndOwner = getConnectorOwnerKey(referenceWire.endConnectorId);
+            ordered.forEach((wire, index) => {
+              const startOwner = getConnectorOwnerKey(wire.startConnectorId);
+              const endOwner = getConnectorOwnerKey(wire.endConnectorId);
+              if (!startOwner || !endOwner) return;
+              let orientedPath = basePath;
+              if (!(startOwner === referenceStartOwner && endOwner === referenceEndOwner)) {
+                if (startOwner === referenceEndOwner && endOwner === referenceStartOwner) {
+                  orientedPath = basePath.slice().reverse();
+                } else {
+                  return;
+                }
+              }
+              const startPos = getConnectorPositionById(wire.startConnectorId);
+              const endPos = getConnectorPositionById(wire.endConnectorId);
+              if (!startPos || !endPos) return;
+              const proposedPath = buildBundleWirePath(startPos, endPos, orientedPath, offsets[index]);
+              if (!proposedPath) return;
+              if (!pointsListApproximatelyEqual(wire.points, proposedPath)) {
+                pendingUpdates.push({ wire, points: proposedPath });
+              }
+            });
+          });
+
+          if (!pendingUpdates.length) {
+            updateStatusTip('整列できる芯線はありません');
+            return;
+          }
+
+          recordHistory();
+          pendingUpdates.forEach(({ wire, points }) => {
+            wire.points = compactColinearPoints(points);
+            simplifyWirePoints(wire);
+          });
+          draw();
+          updateUndoUI();
+          updateStatusTip('芯線を整列しました');
+        }
+
+        function buildWireGroupKey(wire) {
+          if (!wire.startConnectorId || !wire.endConnectorId) return null;
+          const startKey = getConnectorOwnerKey(wire.startConnectorId);
+          const endKey = getConnectorOwnerKey(wire.endConnectorId);
+          if (!startKey || !endKey) return null;
+          const ids = [startKey, endKey].slice().sort();
+          return ids.join('::');
+        }
+
+        function sortWiresForArrangement(wires) {
+          const priority = { blue: 0, red: 1, black: 2 };
+          return wires.slice().sort((a, b) => {
+            const aScore = Object.prototype.hasOwnProperty.call(priority, a.color) ? priority[a.color] : 99;
+            const bScore = Object.prototype.hasOwnProperty.call(priority, b.color) ? priority[b.color] : 99;
+            if (aScore !== bScore) return aScore - bScore;
+            const gaugeA = Number(a.gauge || 0);
+            const gaugeB = Number(b.gauge || 0);
+            if (gaugeA !== gaugeB) return gaugeA - gaugeB;
+            return a.id.localeCompare(b.id);
+          });
+        }
+
+        function getConnectorOwnerKey(connectorId) {
+          if (!connectorId) return null;
+          if (componentConnectorIndex.has(connectorId)) {
+            const { component } = componentConnectorIndex.get(connectorId);
+            return component ? 'component:' + component.id : null;
+          }
+          if (state.junctionIndex && state.junctionIndex.has(connectorId)) {
+            return 'junction:' + connectorId;
+          }
+          return null;
+        }
+
+        function computeConductorOffsets(count, spacing) {
+          if (count <= 1) return [0];
+          const offsets = [];
+          const base = (count - 1) / 2;
+          for (let i = 0; i < count; i += 1) {
+            offsets.push((i - base) * spacing);
+          }
+          return offsets;
+        }
+
+        function buildAxisAlignedBundlePath(startAnchor, endAnchor) {
+          if (!startAnchor || !endAnchor) return null;
+          const epsilon = 1e-6;
+          if (distance(startAnchor, endAnchor) < epsilon) {
+            return [{ x: startAnchor.x, y: startAnchor.y }];
+          }
+          if (Math.abs(startAnchor.x - endAnchor.x) < epsilon || Math.abs(startAnchor.y - endAnchor.y) < epsilon) {
+            return [
+              { x: startAnchor.x, y: startAnchor.y },
+              { x: endAnchor.x, y: endAnchor.y }
+            ];
+          }
+          const horizontalFirst = [
+            { x: startAnchor.x, y: startAnchor.y },
+            { x: endAnchor.x, y: startAnchor.y },
+            { x: endAnchor.x, y: endAnchor.y }
+          ];
+          const verticalFirst = [
+            { x: startAnchor.x, y: startAnchor.y },
+            { x: startAnchor.x, y: endAnchor.y },
+            { x: endAnchor.x, y: endAnchor.y }
+          ];
+          const lengthHorizontal = computeManhattanPathLength(horizontalFirst);
+          const lengthVertical = computeManhattanPathLength(verticalFirst);
+          return lengthHorizontal <= lengthVertical ? horizontalFirst : verticalFirst;
+        }
+
+        function computeManhattanPathLength(path) {
+          if (!path || path.length < 2) return 0;
+          let total = 0;
+          for (let i = 1; i < path.length; i += 1) {
+            const prev = path[i - 1];
+            const current = path[i];
+            total += Math.abs(current.x - prev.x) + Math.abs(current.y - prev.y);
+          }
+          return total;
+        }
+
+        function buildBundleWirePath(startPos, endPos, basePath, offset) {
+          if (!startPos || !endPos || !basePath || basePath.length === 0) return null;
+          const offsetPath = buildOffsetPath(basePath, offset);
+          if (!offsetPath.length) return null;
+          const result = [{ x: startPos.x, y: startPos.y }];
+          const startPreference = getApproachPreference(offsetPath, 'start');
+          appendApproachPoints(result, startPos, offsetPath[0], startPreference);
+          for (let i = 1; i < offsetPath.length - 1; i += 1) {
+            pushIfDifferent(result, offsetPath[i]);
+          }
+          const endAnchor = offsetPath[offsetPath.length - 1];
+          pushIfDifferent(result, endAnchor);
+          const endPreference = getApproachPreference(offsetPath, 'end');
+          appendApproachPoints(result, endAnchor, endPos, endPreference);
+          return compactColinearPoints(result);
+        }
+
+        function appendApproachPoints(list, fromPoint, toPoint, preference = 'auto') {
+          if (!toPoint) return;
+          const approach = buildAxisApproach(fromPoint, toPoint, preference);
+          approach.forEach(point => {
+            pushIfDifferent(list, point);
+          });
+        }
+
+        function buildAxisApproach(fromPoint, toPoint, preference = 'auto') {
+          const epsilon = 1e-6;
+          if (!toPoint) return [];
+          if (distance(fromPoint, toPoint) < epsilon) return [];
+
+          const horizontalFirst = [];
+          if (Math.abs(fromPoint.y - toPoint.y) > epsilon) {
+            horizontalFirst.push({ x: toPoint.x, y: fromPoint.y });
+          }
+          horizontalFirst.push({ x: toPoint.x, y: toPoint.y });
+
+          const verticalFirst = [];
+          if (Math.abs(fromPoint.x - toPoint.x) > epsilon) {
+            verticalFirst.push({ x: fromPoint.x, y: toPoint.y });
+          }
+          verticalFirst.push({ x: toPoint.x, y: toPoint.y });
+
+          const paths = {
+            horizontal: dedupePoints(horizontalFirst),
+            vertical: dedupePoints(verticalFirst)
+          };
+
+          if (preference === 'horizontal' && paths.horizontal.length) return paths.horizontal;
+          if (preference === 'vertical' && paths.vertical.length) return paths.vertical;
+          if (preference === 'horizontal' && !paths.horizontal.length) preference = 'vertical';
+          if (preference === 'vertical' && !paths.vertical.length) preference = 'horizontal';
+          if (preference === 'horizontal') return paths.horizontal;
+          if (preference === 'vertical') return paths.vertical;
+
+          const lengthHorizontal = sequencePathLength(fromPoint, paths.horizontal);
+          const lengthVertical = sequencePathLength(fromPoint, paths.vertical);
+          if (lengthHorizontal < lengthVertical) return paths.horizontal;
+          if (lengthVertical < lengthHorizontal) return paths.vertical;
+
+          if (Math.abs(fromPoint.x - toPoint.x) > Math.abs(fromPoint.y - toPoint.y)) {
+            return paths.horizontal;
+          }
+          return paths.vertical;
+        }
+
+        function dedupePoints(points) {
+          const epsilon = 1e-6;
+          const result = [];
+          points.forEach(point => {
+            if (!result.length || distance(result[result.length - 1], point) > epsilon) {
+              result.push({ x: point.x, y: point.y });
+            }
+          });
+          return result;
+        }
+
+        function sequencePathLength(startPoint, points) {
+          if (!points || !points.length) return 0;
+          let total = 0;
+          let prev = startPoint;
+          points.forEach(point => {
+            total += distance(prev, point);
+            prev = point;
+          });
+          return total;
+        }
+
+        function getApproachPreference(path, phase) {
+          if (!path || path.length < 2) return 'auto';
+          const epsilon = 1e-6;
+          if (phase === 'start') {
+            const next = path[1];
+            const current = path[0];
+            const dx = Math.abs(next.x - current.x);
+            const dy = Math.abs(next.y - current.y);
+            if (dx > epsilon && dy < epsilon) {
+              return 'vertical';
+            }
+            if (dy > epsilon && dx < epsilon) {
+              return 'horizontal';
+            }
+          } else if (phase === 'end') {
+            const current = path[path.length - 1];
+            const prev = path[path.length - 2];
+            const dx = Math.abs(current.x - prev.x);
+            const dy = Math.abs(current.y - prev.y);
+            if (dx > epsilon && dy < epsilon) {
+              return 'vertical';
+            }
+            if (dy > epsilon && dx < epsilon) {
+              return 'horizontal';
+            }
+          }
+          return 'auto';
+        }
+
+        function pushIfDifferent(list, point) {
+          if (!point) return;
+          const epsilon = 1e-6;
+          if (!list.length || distance(list[list.length - 1], point) > epsilon) {
+            list.push({ x: point.x, y: point.y });
+          }
+        }
+
+        function buildOffsetPath(basePoints, offset) {
+          if (!basePoints || basePoints.length === 0) return [];
+          if (Math.abs(offset) < 0.01) {
+            return basePoints.map(point => ({ x: point.x, y: point.y }));
+          }
+          const epsilon = 1e-6;
+          const result = [{ x: basePoints[0].x, y: basePoints[0].y }];
+          let current = { x: basePoints[0].x, y: basePoints[0].y };
+          for (let i = 0; i < basePoints.length - 1; i += 1) {
+            const a = basePoints[i];
+            const b = basePoints[i + 1];
+            if (Math.abs(a.x - b.x) < epsilon) {
+              const targetX = a.x + offset;
+              if (Math.abs(current.x - targetX) > epsilon) {
+                current = { x: targetX, y: current.y };
+                result.push({ x: current.x, y: current.y });
+              }
+              if (Math.abs(current.y - b.y) > epsilon) {
+                current = { x: current.x, y: b.y };
+                result.push({ x: current.x, y: current.y });
+              }
+            } else if (Math.abs(a.y - b.y) < epsilon) {
+              const targetY = a.y + offset;
+              if (Math.abs(current.y - targetY) > epsilon) {
+                current = { x: current.x, y: targetY };
+                result.push({ x: current.x, y: current.y });
+              }
+              if (Math.abs(current.x - b.x) > epsilon) {
+                current = { x: b.x, y: current.y };
+                result.push({ x: current.x, y: current.y });
+              }
+            } else {
+              current = { x: b.x, y: b.y };
+              result.push({ x: current.x, y: current.y });
+            }
+          }
+          const end = basePoints[basePoints.length - 1];
+          if (Math.abs(current.x - end.x) > epsilon || Math.abs(current.y - end.y) > epsilon) {
+            result.push({ x: end.x, y: end.y });
+          }
+          return compactColinearPoints(result);
+        }
+
+        function pointsListApproximatelyEqual(existingPoints, proposedPoints) {
+          if (!Array.isArray(existingPoints) || !Array.isArray(proposedPoints)) return false;
+          if (existingPoints.length !== proposedPoints.length) return false;
+          for (let i = 0; i < existingPoints.length; i += 1) {
+            if (distance(existingPoints[i], proposedPoints[i]) > 0.5) {
+              return false;
+            }
+          }
           return true;
         }
 
@@ -2277,6 +2672,9 @@
               case 'switch':
                 drawSwitch(component);
                 break;
+              case 'locatorSwitch':
+                drawLocatorSwitch(component);
+                break;
               case 'threeWaySwitch':
                 drawThreeWaySwitch(component);
                 break;
@@ -2294,13 +2692,30 @@
                 break;
             }
             const activeThreeWayKey = component.type === 'threeWaySwitch' ? getThreeWayState(component.id) : null;
-            const switchIsOn = component.type === 'switch' ? getSwitchState(component.id) : false;
+            const switchStatus = (component.type === 'switch' || component.type === 'locatorSwitch')
+              ? (state.switchSideStatus.get(component.id) || null)
+              : null;
+            const locatorInfo = component.type === 'locatorSwitch'
+              ? (state.locatorIndicators.get(component.id) || null)
+              : null;
             component.connectors.forEach(connector => {
               const position = getConnectorPositionById(connector.id);
               const options = {};
-              if (component.type === 'switch') {
-                if (switchIsOn && (connector.key === 'in' || connector.key === 'out')) {
-                  options.active = true;
+              if (component.type === 'switch' || component.type === 'locatorSwitch') {
+                const side = connector.key && connector.key.startsWith('left') ? 'left'
+                  : connector.key && connector.key.startsWith('right') ? 'right'
+                  : null;
+                if (switchStatus) {
+                  if (switchStatus.isOn) {
+                    options.active = true;
+                    options.accentColor = '#16a34a';
+                  } else if (side && switchStatus[side + 'Hot']) {
+                    options.active = true;
+                    options.accentColor = '#b91c1c';
+                  } else if (component.type === 'locatorSwitch' && locatorInfo && side && locatorInfo[side + 'Neutral']) {
+                    options.active = true;
+                    options.accentColor = '#1d4ed8';
+                  }
                 }
               } else if (component.type === 'threeWaySwitch') {
                 if (connector.key === 'common') {
@@ -2356,36 +2771,55 @@
             ctx.strokeStyle = '#cbd5f5';
             ctx.lineWidth = 1;
             ctx.strokeRect(x, y, width, height);
-            const leftContact = {
+            const leftContacts = [
+              { x: x + 22, y: y + height / 3 },
+              { x: x + 22, y: y + (2 * height) / 3 }
+            ];
+            const rightContacts = [
+              { x: x + width - 22, y: y + height / 3 },
+              { x: x + width - 22, y: y + (2 * height) / 3 }
+            ];
+            ctx.fillStyle = '#0f172a';
+            ctx.beginPath();
+            leftContacts.concat(rightContacts).forEach(point => {
+              ctx.moveTo(point.x + 5, point.y);
+              ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+            });
+            ctx.fill();
+
+            const armOrigin = {
               x: x + 22,
               y: y + height / 2
             };
-            const rightContact = {
+            const armTargetOn = {
               x: x + width - 22,
-              y: y + height / 2
+              y: armOrigin.y
             };
-            ctx.fillStyle = '#0f172a';
-            ctx.beginPath();
-            ctx.arc(leftContact.x, leftContact.y, 5, 0, Math.PI * 2);
-            ctx.arc(rightContact.x, rightContact.y, 5, 0, Math.PI * 2);
-            ctx.fill();
+            const armTargetOff = {
+              x: x + width - 26,
+              y: y + height / 3
+            };
             ctx.strokeStyle = '#0f172a';
-            ctx.lineWidth = 2.5;
-            ctx.setLineDash([]);
+            ctx.lineWidth = 2.6;
             ctx.beginPath();
-            ctx.moveTo(leftContact.x, leftContact.y);
+            ctx.moveTo(armOrigin.x, armOrigin.y);
             if (isOn) {
-              ctx.lineTo(rightContact.x, rightContact.y);
+              ctx.lineTo(armTargetOn.x, armTargetOn.y);
             } else {
-              ctx.lineTo(rightContact.x - 12, rightContact.y - 18);
+              ctx.lineTo(armTargetOff.x, armTargetOff.y);
             }
             ctx.stroke();
+
             ctx.lineWidth = 1.5;
             ctx.beginPath();
-            ctx.moveTo(leftContact.x - 14, leftContact.y);
-            ctx.lineTo(leftContact.x - 5, leftContact.y);
-            ctx.moveTo(rightContact.x + 5, rightContact.y);
-            ctx.lineTo(rightContact.x + 14, rightContact.y);
+            ctx.moveTo(leftContacts[0].x - 16, leftContacts[0].y);
+            ctx.lineTo(leftContacts[0].x - 6, leftContacts[0].y);
+            ctx.moveTo(leftContacts[1].x - 16, leftContacts[1].y);
+            ctx.lineTo(leftContacts[1].x - 6, leftContacts[1].y);
+            ctx.moveTo(rightContacts[0].x + 6, rightContacts[0].y);
+            ctx.lineTo(rightContacts[0].x + 16, rightContacts[0].y);
+            ctx.moveTo(rightContacts[1].x + 6, rightContacts[1].y);
+            ctx.lineTo(rightContacts[1].x + 16, rightContacts[1].y);
             ctx.stroke();
             ctx.restore();
           });
@@ -2399,6 +2833,101 @@
           ctx.fillText(component.label, cx, position.y - 10);
           ctx.font = '12px "Segoe UI", sans-serif';
           ctx.fillText(isOn ? '入' : '切', cx, position.y + size.height - 12);
+          if (switchLabel) {
+            ctx.font = 'bold 18px "Segoe UI", sans-serif';
+            ctx.fillStyle = '#c2410c';
+            ctx.textAlign = 'right';
+            ctx.fillText(switchLabel, position.x + size.width - 6, position.y + 18);
+          }
+          ctx.restore();
+        }
+
+        function drawLocatorSwitch(component) {
+          const isOn = getSwitchState(component.id);
+          const locatorInfo = state.locatorIndicators.get(component.id) || {};
+          const indicatorOn = Boolean(locatorInfo.indicatorOn);
+          drawComponentWithRotation(component, ({ width, height }) => {
+            const x = 0;
+            const y = 0;
+            ctx.save();
+            ctx.strokeStyle = '#cbd5f5';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y, width, height);
+
+            const indicatorCenter = { x: x + width / 2, y: y + 26 };
+            ctx.save();
+            if (indicatorOn) {
+              ctx.shadowColor = 'rgba(251, 191, 36, 0.55)';
+              ctx.shadowBlur = 16;
+            }
+            ctx.beginPath();
+            ctx.fillStyle = indicatorOn ? '#fbbf24' : '#e2e8f0';
+            ctx.strokeStyle = indicatorOn ? '#b45309' : '#94a3b8';
+            ctx.lineWidth = indicatorOn ? 2 : 1.5;
+            ctx.arc(indicatorCenter.x, indicatorCenter.y, 14, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.save();
+            ctx.font = '11px "Segoe UI", sans-serif';
+            ctx.fillStyle = indicatorOn ? '#92400e' : '#475569';
+            ctx.textAlign = 'center';
+            ctx.fillText('灯', indicatorCenter.x, indicatorCenter.y + 18);
+            ctx.restore();
+
+            const leftContacts = [
+              { x: x + 24, y: y + height / 3 + 6 },
+              { x: x + 24, y: y + (2 * height) / 3 + 6 }
+            ];
+            const rightContacts = [
+              { x: x + width - 24, y: y + height / 3 + 6 },
+              { x: x + width - 24, y: y + (2 * height) / 3 + 6 }
+            ];
+            ctx.fillStyle = '#0f172a';
+            ctx.beginPath();
+            leftContacts.concat(rightContacts).forEach(point => {
+              ctx.moveTo(point.x + 5, point.y);
+              ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+            });
+            ctx.fill();
+
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 2.6;
+            ctx.beginPath();
+            ctx.moveTo(leftContacts[0].x, leftContacts[0].y + 10);
+            if (isOn) {
+              ctx.lineTo(rightContacts[0].x, rightContacts[0].y + 10);
+            } else {
+              ctx.lineTo(rightContacts[0].x - 16, rightContacts[0].y - 6);
+            }
+            ctx.stroke();
+
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = indicatorOn ? 2 : 1.2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(leftContacts[0].x, leftContacts[0].y - 18);
+            ctx.lineTo(rightContacts[0].x, rightContacts[0].y - 18);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.restore();
+          });
+
+          const { position, size } = component;
+          const cx = position.x + size.width / 2;
+          const switchLabel = getPairingDisplayLabel(component.id);
+          ctx.save();
+          ctx.font = '14px "Segoe UI", sans-serif';
+          ctx.fillStyle = '#1f2937';
+          ctx.textAlign = 'center';
+          ctx.fillText(component.label, cx, position.y - 10);
+          ctx.font = '12px "Segoe UI", sans-serif';
+          ctx.fillText(isOn ? '入' : '切', cx, position.y + size.height - 12);
+          ctx.font = '11px "Segoe UI", sans-serif';
+          ctx.fillStyle = indicatorOn ? '#b45309' : '#475569';
+          ctx.fillText(indicatorOn ? 'ホタル点灯' : 'ホタル消灯', cx, position.y + size.height + 14);
           if (switchLabel) {
             ctx.font = 'bold 18px "Segoe UI", sans-serif';
             ctx.fillStyle = '#c2410c';
@@ -2740,12 +3269,17 @@
             .filter(component => component.type === 'pilot')
             .map(component => getConnectorId(component.id, 'neutral'));
 
+          const locatorIndicators = new Map();
+          const switchSideStatus = new Map();
           state.components.forEach(component => {
-            if (component.type === 'switch') {
+            if (component.type === 'switch' || component.type === 'locatorSwitch') {
+              const groups = getSwitchConnectorGroups(component);
+              const leftIds = connectorIdsFromGroup(groups.left);
+              const rightIds = connectorIdsFromGroup(groups.right);
+              connectConnectorSet(leftIds, addEdge);
+              connectConnectorSet(rightIds, addEdge);
               if (getSwitchState(component.id)) {
-                const switchInId = getConnectorId(component.id, 'in');
-                const switchOutId = getConnectorId(component.id, 'out');
-                addEdge(switchInId, switchOutId);
+                connectConnectorSets(leftIds, rightIds, addEdge);
               }
             } else if (component.type === 'threeWaySwitch') {
               const commonId = getConnectorId(component.id, 'common');
@@ -2777,9 +3311,40 @@
             });
           });
 
+          state.components.forEach(component => {
+            if (component.type !== 'switch' && component.type !== 'locatorSwitch') return;
+            const groups = getSwitchConnectorGroups(component);
+            const leftIds = connectorIdsFromGroup(groups.left);
+            const rightIds = connectorIdsFromGroup(groups.right);
+            const isOn = getSwitchState(component.id);
+            const leftHot = leftIds.some(id => hasPath(powerHotId, id));
+            const rightHot = rightIds.some(id => hasPath(powerHotId, id));
+            const leftNeutral = leftIds.some(id => hasPath(id, powerNeutralId));
+            const rightNeutral = rightIds.some(id => hasPath(id, powerNeutralId));
+            switchSideStatus.set(component.id, {
+              isOn,
+              leftHot,
+              rightHot,
+              leftNeutral,
+              rightNeutral
+            });
+            if (component.type === 'locatorSwitch') {
+              const indicatorOn = !isOn && ((leftHot && rightNeutral) || (rightHot && leftNeutral));
+              locatorIndicators.set(component.id, {
+                indicatorOn,
+                leftHot,
+                rightHot,
+                leftNeutral,
+                rightNeutral
+              });
+            }
+          });
+
           state.outletStatuses = outletStatuses;
           state.lampOn = lampOn;
           state.pilotOn = pilotOn;
+          state.switchSideStatus = switchSideStatus;
+          state.locatorIndicators = locatorIndicators;
           updateSwitchPairings(adjacency);
 
           function hasPath(start, target) {
@@ -2812,14 +3377,13 @@
           const usedLoads = new Set();
           const pairs = [];
           state.components.forEach(component => {
-            if (component.type !== 'switch' && component.type !== 'threeWaySwitch') return;
+            if (component.type !== 'switch' && component.type !== 'locatorSwitch' && component.type !== 'threeWaySwitch') return;
             if (state.pairingLabels.has(component.id)) return;
             const startConnectors = [];
-            if (component.type === 'switch') {
-              const outConnector = component.connectors.find(connector => connector.key === 'out');
-              if (outConnector) {
-                startConnectors.push(outConnector.id);
-              }
+            if (component.type === 'switch' || component.type === 'locatorSwitch') {
+              component.connectors
+                .filter(connector => connector.key && connector.key.startsWith('right'))
+                .forEach(connector => startConnectors.push(connector.id));
             } else {
               component.connectors
                 .filter(connector => connector.key === 'traveler1' || connector.key === 'traveler3')
@@ -2868,7 +3432,7 @@
                   }
                 }
                 if (
-                  (component.type === 'switch' && connector.key === 'out') ||
+                  ((component.type === 'switch' || component.type === 'locatorSwitch') && connector.key && connector.key.startsWith('right')) ||
                   (component.type === 'threeWaySwitch' && (connector.key === 'traveler1' || connector.key === 'traveler3'))
                 ) {
                   continue;
@@ -2940,7 +3504,7 @@
         conductorMap.forEach((connections, componentId) => {
           const component = getComponentById(componentId);
           if (!component) return;
-          if (component.type === 'switch' || component.type === 'threeWaySwitch' || component.type === 'pilot') {
+          if (component.type === 'switch' || component.type === 'locatorSwitch' || component.type === 'threeWaySwitch' || component.type === 'pilot') {
             return;
             }
             const involvedColors = new Set();
